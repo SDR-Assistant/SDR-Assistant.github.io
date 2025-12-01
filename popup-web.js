@@ -22,6 +22,13 @@ const emailOut = document.getElementById('emailOut');
 const telePitchOut = document.getElementById('telePitchOut');
 const copyEmailBtn = document.getElementById('copyEmail');
 const personaTabs = document.getElementById('personaTabs');
+const telePersonaTabs = document.getElementById('telePersonaTabs');
+const reviseEmailPersonaBtn = document.getElementById('reviseEmailPersona');
+const reviseEmailAllBtn = document.getElementById('reviseEmailAll');
+const revisePitchPersonaBtn = document.getElementById('revisePitchPersona');
+const revisePitchAllBtn = document.getElementById('revisePitchAll');
+const emailVersionControls = document.getElementById('emailVersionControls');
+const pitchVersionControls = document.getElementById('pitchVersionControls');
 const viewDocs = document.getElementById('viewDocs');
 const historyList = document.getElementById('historyList');
 const historyEmpty = document.getElementById('historyEmpty');
@@ -34,6 +41,19 @@ const modalTitle = document.getElementById('modalTitle');
 const modalBody = document.getElementById('modalBody');
 const modalFooter = document.getElementById('modalFooter');
 const modalClose = document.getElementById('modalClose');
+const modalContainer = document.querySelector('.modal-container');
+const modalHeader = modalRoot?.querySelector('.modal-header');
+const modalMaximizeBtn = modalHeader ? (() => {
+  const btn = document.createElement('button');
+  btn.id = 'modalMaximize';
+  btn.type = 'button';
+  btn.className = 'ghost';
+  btn.textContent = '⛶';
+  btn.title = 'Toggle full height';
+  btn.setAttribute('aria-label', 'Maximize modal');
+  modalHeader.insertBefore(btn, modalClose);
+  return btn;
+})() : null;
 const modeTabs = document.querySelectorAll('[data-mode-tab]');
 const modeViews = document.querySelectorAll('[data-mode-view]');
 const historySections = document.querySelectorAll('[data-history-section]');
@@ -77,6 +97,8 @@ let currentHistoryId = null;
 let targetHistoryEntries = [];
 let currentTargetHistoryId = null;
 let personaEmailDrafts = [];
+let personaEmailVersions = [];
+let telephonicPitchVersions = [];
 let selectedPersonaIndex = -1;
 let exportTemplates = [];
 let selectedTemplateId = null;
@@ -92,6 +114,7 @@ let telephonicPitchErrorMessage = '';
 let telephonicPitchDebugAttempts = [];
 let storedDocs = [];
 let activeBriefData = null;
+let revisionModalState = null;
 const docLabelCache = new Map();
 const selectedDocsByMode = {
   [Mode.TARGETED_BRIEF]: [],
@@ -100,6 +123,7 @@ const selectedDocsByMode = {
 const briefProgressState = { runId: null, total: 0, current: 0 };
 let themePreference = ThemePreference.SYSTEM;
 let cachedGeminiKey = '';
+let cachedPitchingCompany = '';
 
 function debounce(fn, wait = 150) {
   let timeoutId = null;
@@ -186,6 +210,14 @@ const geminiKeyLoadPromise = chrome.storage.local
     if (apiKeyInput) {
       apiKeyInput.value = val;
     }
+    return val;
+  })
+  .catch(() => '');
+const pitchingCompanyLoadPromise = chrome.storage.local
+  .get([PITCH_FROM_COMPANY_KEY])
+  .then((data) => {
+    const val = data && typeof data[PITCH_FROM_COMPANY_KEY] === 'string' ? data[PITCH_FROM_COMPANY_KEY] : '';
+    cachedPitchingCompany = val;
     return val;
   })
   .catch(() => '');
@@ -428,6 +460,7 @@ setTargetSectors([]);
 loadStoredDocs().finally(() => {
   renderDocChips(Mode.TARGETED_BRIEF);
   renderDocChips(Mode.TARGET_GENERATION);
+  updateRevisionButtonsState();
 });
 
 function resetBriefProgress() {
@@ -450,6 +483,10 @@ function createEmptyBriefData() {
     telephonicPitches: [],
     telephonicPitchError: '',
     telephonicPitchAttempts: [],
+    telephonicPitchVersions: [],
+    telephonicPitchVersionIndexes: [],
+    personaEmailVersions: [],
+    personaEmailVersionIndexes: [],
     email: {},
     overview_error: '',
     persona_error: '',
@@ -493,8 +530,12 @@ function mergeBriefData(partial = {}) {
   if (Array.isArray(partial.top_5_news)) next.top_5_news = partial.top_5_news;
   if (Array.isArray(partial.personas)) next.personas = partial.personas;
   if (Array.isArray(partial.personaEmails)) next.personaEmails = partial.personaEmails;
+  if (Array.isArray(partial.personaEmailVersions)) next.personaEmailVersions = partial.personaEmailVersions;
+  if (Array.isArray(partial.personaEmailVersionIndexes)) next.personaEmailVersionIndexes = partial.personaEmailVersionIndexes;
   if (Array.isArray(partial.telephonicPitches)) next.telephonicPitches = partial.telephonicPitches;
   if (Array.isArray(partial.telephonicPitchAttempts)) next.telephonicPitchAttempts = partial.telephonicPitchAttempts;
+  if (Array.isArray(partial.telephonicPitchVersions)) next.telephonicPitchVersions = partial.telephonicPitchVersions;
+  if (Array.isArray(partial.telephonicPitchVersionIndexes)) next.telephonicPitchVersionIndexes = partial.telephonicPitchVersionIndexes;
   assign('telephonicPitchError');
   if (partial.email !== undefined) next.email = partial.email || {};
 
@@ -537,6 +578,83 @@ function renderTopNewsEntries(newsItems = [], options = {}) {
     topNewsList.appendChild(li);
   });
   if (topNewsHint) topNewsHint.textContent = '';
+}
+
+function buildVersionEntry(baseDraft = {}) {
+  return {
+    versions: [baseDraft],
+    activeIndex: 0,
+  };
+}
+
+function clampIndex(idx, arr) {
+  if (!Array.isArray(arr) || !arr.length) return -1;
+  return Math.max(0, Math.min(idx, arr.length - 1));
+}
+
+function isLatestVersion(entry) {
+  if (!entry || !Array.isArray(entry.versions) || !entry.versions.length) return true;
+  const active = typeof entry.activeIndex === 'number' ? entry.activeIndex : 0;
+  return active >= entry.versions.length - 1;
+}
+
+function syncVersionState() {
+  if (!activeBriefData) return;
+  const personas = Array.isArray(activeBriefData.personas) ? activeBriefData.personas : [];
+
+  // Emails
+  const personaEmails = Array.isArray(activeBriefData.personaEmails) ? activeBriefData.personaEmails : [];
+  if (!Array.isArray(activeBriefData.personaEmailVersions)) activeBriefData.personaEmailVersions = [];
+  const emailVersions = activeBriefData.personaEmailVersions;
+  const emailVersionIndexes = Array.isArray(activeBriefData.personaEmailVersionIndexes) ? activeBriefData.personaEmailVersionIndexes : [];
+  for (let i = 0; i < Math.max(personaEmails.length, personas.length, emailVersions.length); i += 1) {
+    if (!emailVersions[i]) {
+      const base = personaEmails[i] || {};
+      emailVersions[i] = buildVersionEntry(base);
+    } else if (!Array.isArray(emailVersions[i].versions) || !emailVersions[i].versions.length) {
+      emailVersions[i].versions = [personaEmails[i] || {}];
+      emailVersions[i].activeIndex = 0;
+    }
+    if (emailVersionIndexes[i] !== undefined) {
+      emailVersions[i].activeIndex = emailVersionIndexes[i];
+    }
+    emailVersions[i].activeIndex = clampIndex(
+      typeof emailVersions[i].activeIndex === 'number' ? emailVersions[i].activeIndex : 0,
+      emailVersions[i].versions
+    );
+    const activeDraft = emailVersions[i].versions[emailVersions[i].activeIndex] || {};
+    personaEmails[i] = activeDraft;
+  }
+  activeBriefData.personaEmails = personaEmails;
+  personaEmailVersions = emailVersions;
+  activeBriefData.personaEmailVersionIndexes = personaEmailVersions.map((v) => v.activeIndex);
+
+  // Telephonic pitches
+  const telePitches = Array.isArray(activeBriefData.telephonicPitches) ? activeBriefData.telephonicPitches : [];
+  if (!Array.isArray(activeBriefData.telephonicPitchVersions)) activeBriefData.telephonicPitchVersions = [];
+  const pitchVersions = activeBriefData.telephonicPitchVersions;
+  const pitchVersionIndexes = Array.isArray(activeBriefData.telephonicPitchVersionIndexes) ? activeBriefData.telephonicPitchVersionIndexes : [];
+  for (let i = 0; i < Math.max(telePitches.length, personas.length, pitchVersions.length); i += 1) {
+    if (!pitchVersions[i]) {
+      const base = telePitches[i] || {};
+      pitchVersions[i] = buildVersionEntry(base);
+    } else if (!Array.isArray(pitchVersions[i].versions) || !pitchVersions[i].versions.length) {
+      pitchVersions[i].versions = [telePitches[i] || {}];
+      pitchVersions[i].activeIndex = 0;
+    }
+    if (pitchVersionIndexes[i] !== undefined) {
+      pitchVersions[i].activeIndex = pitchVersionIndexes[i];
+    }
+    pitchVersions[i].activeIndex = clampIndex(
+      typeof pitchVersions[i].activeIndex === 'number' ? pitchVersions[i].activeIndex : 0,
+      pitchVersions[i].versions
+    );
+    const activePitch = pitchVersions[i].versions[pitchVersions[i].activeIndex] || {};
+    telePitches[i] = activePitch;
+  }
+  activeBriefData.telephonicPitches = telePitches;
+  telephonicPitchVersions = pitchVersions;
+  activeBriefData.telephonicPitchVersionIndexes = telephonicPitchVersions.map((v) => v.activeIndex);
 }
 
 function renderBriefFromState() {
@@ -586,6 +704,8 @@ function renderPersonaSectionsFromState() {
     console.warn('Telephonic pitch generation attempts', telephonicPitchDebugAttempts);
   }
 
+  syncVersionState();
+
   if (activeBriefData.persona_error && !personasData.length) {
     if (personasDiv) {
       personasDiv.innerHTML = '';
@@ -617,16 +737,17 @@ function prepareResultShell() {
 
   if (personasDiv) personasDiv.innerHTML = '<p>Fetching personas...</p>';
   personaEmailDrafts = [];
+  personaEmailVersions = [];
+  telephonicPitchVersions = [];
   selectedPersonaIndex = -1;
-  if (personaTabs) {
-    personaTabs.innerHTML = '';
-    personaTabs.style.display = 'none';
-  }
-  if (emailOut) emailOut.innerText = 'Generating email drafts...';
+  if (emailVersionControls) emailVersionControls.innerHTML = '';
+  if (pitchVersionControls) pitchVersionControls.innerHTML = '';
+  resetPersonaTabContainers();
+  setEmailOutput('Generating email drafts...', { copyTextOverride: '' });
   telephonicPitchErrorMessage = '';
   telephonicPitchDebugAttempts = [];
   setTelePitchOutput('Generating telephonic pitches...');
-  updateCopyEmailButtonState('');
+  updateRevisionButtonsState();
 }
 
 function renderBriefProgress(label = 'Working...') {
@@ -1084,16 +1205,12 @@ newResearchBtn?.addEventListener('click', () => {
   personaEmailDrafts = [];
   selectedPersonaIndex = -1;
 
-  if (personaTabs) {
-    personaTabs.innerHTML = '';
-    personaTabs.style.display = 'none';
-  }
+  resetPersonaTabContainers();
 
-  if (emailOut) emailOut.innerText = 'No email generated yet.';
+  setEmailOutput('No email generated yet.', { copyTextOverride: '' });
   telephonicPitchErrorMessage = '';
   telephonicPitchDebugAttempts = [];
   setTelePitchOutput('No telephonic pitch generated yet.');
-  updateCopyEmailButtonState('');
 });
 
 newTargetResearchBtn?.addEventListener('click', () => {
@@ -1131,6 +1248,16 @@ targetDocChips?.addEventListener('click', (evt) => {
 });
 
 personaTabs?.addEventListener('click', (evt) => {
+  const button = evt.target.closest('.persona-tab');
+  if (!button) return;
+  const { index } = button.dataset;
+  const idx = Number(index);
+  if (!Number.isNaN(idx)) {
+    activatePersonaTab(idx);
+  }
+});
+
+telePersonaTabs?.addEventListener('click', (evt) => {
   const button = evt.target.closest('.persona-tab');
   if (!button) return;
   const { index } = button.dataset;
@@ -1188,8 +1315,18 @@ copyEmailBtn?.addEventListener('click', async () => {
   }
 });
 
+reviseEmailPersonaBtn?.addEventListener('click', () => openRevisionPlayground({ type: 'email', scope: 'single' }));
+reviseEmailAllBtn?.addEventListener('click', () => openRevisionPlayground({ type: 'email', scope: 'all' }));
+revisePitchPersonaBtn?.addEventListener('click', () => openRevisionPlayground({ type: 'pitch', scope: 'single' }));
+revisePitchAllBtn?.addEventListener('click', () => openRevisionPlayground({ type: 'pitch', scope: 'all' }));
+
 function closeModal() {
   if (modalRoot?.classList.contains('hidden')) return;
+  if (modalContainer) modalContainer.classList.remove('modal-maximized');
+  if (modalMaximizeBtn) {
+    modalMaximizeBtn.textContent = '⛶';
+    modalMaximizeBtn.setAttribute('aria-label', 'Maximize modal');
+  }
   if (typeof activeModalCleanup === 'function') {
     try {
       activeModalCleanup();
@@ -1208,6 +1345,15 @@ function closeModal() {
   modalRoot?.setAttribute('aria-hidden', 'true');
 }
 
+function toggleModalMaximize(force) {
+  if (!modalContainer || !modalMaximizeBtn) return;
+  const next = force !== undefined ? force : !modalContainer.classList.contains('modal-maximized');
+  modalContainer.classList.toggle('modal-maximized', next);
+  modalMaximizeBtn.textContent = next ? '🗗' : '⛶';
+  modalMaximizeBtn.setAttribute('aria-label', next ? 'Restore modal size' : 'Maximize modal');
+  modalMaximizeBtn.setAttribute('aria-pressed', next ? 'true' : 'false');
+}
+
 function openModal({ title = '', render }) {
   if (!modalRoot) return;
   if (!modalRoot.classList.contains('hidden')) {
@@ -1218,6 +1364,7 @@ function openModal({ title = '', render }) {
   if (modalFooter) modalFooter.innerHTML = '';
   modalRoot.classList.remove('hidden');
   modalRoot.setAttribute('aria-hidden', 'false');
+  toggleModalMaximize(false);
   if (typeof render === 'function') {
     const cleanup = render({ body: modalBody, footer: modalFooter, close: closeModal });
     if (typeof cleanup === 'function') {
@@ -1368,6 +1515,7 @@ function openDocPickerModal(mode) {
 }
 
 modalClose?.addEventListener('click', () => closeModal());
+modalMaximizeBtn?.addEventListener('click', () => toggleModalMaximize());
 modalRoot?.addEventListener('click', (evt) => {
   if (!evt.target) return;
   if (evt.target === modalRoot || evt.target.classList.contains('modal-backdrop')) {
@@ -2012,8 +2160,10 @@ function renderSettingsModal({ body, footer, close }) {
       }
       if (pitchingCompany) {
         await chrome.storage.local.set({ [PITCH_FROM_COMPANY_KEY]: pitchingCompany });
+        cachedPitchingCompany = pitchingCompany;
       } else {
         await chrome.storage.local.remove(PITCH_FROM_COMPANY_KEY);
+        cachedPitchingCompany = '';
       }
       await saveThemePreference(selectedTheme);
       if (apiKeyInput) apiKeyInput.value = key;
@@ -3210,10 +3360,202 @@ function formatFallbackEmailText(email) {
   return '';
 }
 
+function escapeHtml(str = '') {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeUrl(url = '') {
+  if (typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  const lowered = trimmed.toLowerCase();
+  if (lowered.startsWith('javascript:') || lowered.startsWith('data:') || lowered.startsWith('vbscript:')) return '';
+  return escapeHtml(trimmed);
+}
+
+function formatInlineMarkdown(text = '') {
+  let escaped = escapeHtml(text);
+  escaped = escaped.replace(/`([^`]+)`/g, (_, code) => `<code>${escapeHtml(code)}</code>`);
+  escaped = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  escaped = escaped.replace(/__(.+?)__/g, '<strong>$1</strong>');
+  escaped = escaped.replace(/(\s|^)\*(.+?)\*(\s|$)/g, (_, lead, val, trail) => `${lead}<em>${val}</em>${trail}`);
+  escaped = escaped.replace(/(\s|^)_(.+?)_(\s|$)/g, (_, lead, val, trail) => `${lead}<em>${val}</em>${trail}`);
+  escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url) => {
+    const safeUrl = escapeUrl(url);
+    if (!safeUrl) return escapeHtml(label);
+    return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+  });
+  return escaped;
+}
+
+function markdownToHtml(md = '') {
+  if (typeof md !== 'string' || !md.trim()) return escapeHtml(md || '');
+  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  const html = [];
+  let inCode = false;
+  let codeBuffer = [];
+  let listType = null;
+  let pendingParagraph = [];
+
+  const closeList = () => {
+    if (listType) {
+      html.push(`</${listType}>`);
+      listType = null;
+    }
+  };
+
+  const flushParagraph = () => {
+    if (!pendingParagraph.length) return;
+    html.push(`<p>${formatInlineMarkdown(pendingParagraph.join(' '))}</p>`);
+    pendingParagraph = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+
+    if (line.trim().startsWith('```')) {
+      flushParagraph();
+      closeList();
+      if (inCode) {
+        html.push(`<pre><code>${escapeHtml(codeBuffer.join('\n'))}</code></pre>`);
+        codeBuffer = [];
+        inCode = false;
+      } else {
+        inCode = true;
+        codeBuffer = [];
+      }
+      continue;
+    }
+
+    if (inCode) {
+      codeBuffer.push(rawLine);
+      continue;
+    }
+
+    const headingMatch = line.match(/^(#{1,3})\s+(.*)$/);
+    if (headingMatch) {
+      flushParagraph();
+      closeList();
+      const level = headingMatch[1].length;
+      html.push(`<h${level}>${formatInlineMarkdown(headingMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    const ulMatch = rawLine.match(/^\s*[-*]\s+(.*)$/);
+    const olMatch = rawLine.match(/^\s*\d+\.\s+(.*)$/);
+    if (ulMatch || olMatch) {
+      flushParagraph();
+      const targetList = olMatch ? 'ol' : 'ul';
+      if (listType && listType !== targetList) {
+        closeList();
+      }
+      if (!listType) {
+        listType = targetList;
+        html.push(`<${targetList}>`);
+      }
+      const itemContent = formatInlineMarkdown((ulMatch ? ulMatch[1] : olMatch[1]) || '');
+      html.push(`<li>${itemContent}</li>`);
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushParagraph();
+      closeList();
+      continue;
+    }
+
+    if (listType) {
+      closeList();
+    }
+
+    pendingParagraph.push(line.trim());
+  }
+
+  if (inCode) {
+    html.push(`<pre><code>${escapeHtml(codeBuffer.join('\n'))}</code></pre>`);
+  }
+  flushParagraph();
+  closeList();
+
+  return html.join('\n');
+}
+
+function setEmailOutput(text = '', { allowMarkdown = false, copyTextOverride } = {}) {
+  if (!emailOut) return;
+  const value = typeof text === 'string' ? text : '';
+  if (allowMarkdown) {
+    emailOut.innerHTML = markdownToHtml(value);
+  } else {
+    emailOut.textContent = value;
+  }
+  const copyValue = copyTextOverride !== undefined ? copyTextOverride : value;
+  updateCopyEmailButtonState(copyValue);
+}
+
 function updateCopyEmailButtonState(text = '') {
   if (!copyEmailBtn) return;
   const hasText = typeof text === 'string' && text.trim().length > 0;
   copyEmailBtn.disabled = !hasText;
+}
+
+function getPersonaTabContainers() {
+  return [personaTabs, telePersonaTabs].filter(Boolean);
+}
+
+function resetPersonaTabContainers() {
+  getPersonaTabContainers().forEach((container) => {
+    container.innerHTML = '';
+    container.style.display = 'none';
+  });
+}
+
+function buildPersonaTabButton(draft, idx, activeIndex = 0) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'persona-tab';
+  btn.dataset.index = String(idx);
+  btn.setAttribute('role', 'tab');
+  const isActive = idx === activeIndex;
+  btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  btn.tabIndex = isActive ? 0 : -1;
+
+  const labelBits = [];
+  const name = draft.personaName && draft.personaName.trim() ? draft.personaName.trim() : `Persona ${idx + 1}`;
+  labelBits.push(name);
+  if (draft.personaDesignation) labelBits.push(draft.personaDesignation);
+  btn.textContent = labelBits.join(' \u2013 ');
+  return btn;
+}
+
+function renderPersonaTabsForContainers(drafts = [], activeIndex = 0) {
+  getPersonaTabContainers().forEach((container) => {
+    container.innerHTML = '';
+    if (!drafts.length) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = '';
+    drafts.forEach((draft, idx) => {
+      container.appendChild(buildPersonaTabButton(draft, idx, activeIndex));
+    });
+  });
+}
+
+function syncPersonaTabActiveStates(activeIndex) {
+  getPersonaTabContainers().forEach((container) => {
+    const buttons = container.querySelectorAll('.persona-tab');
+    buttons.forEach((btn, btnIdx) => {
+      const isActive = btnIdx === activeIndex;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      btn.tabIndex = isActive ? 0 : -1;
+    });
+  });
 }
 
 function getActivePersonaName() {
@@ -3223,26 +3565,18 @@ function getActivePersonaName() {
 }
 
 function activatePersonaTab(index) {
-  if (!personaTabs || !personaEmailDrafts.length) return;
+  if (!personaEmailDrafts.length) return;
   const safeIndex = Math.max(0, Math.min(index, personaEmailDrafts.length - 1));
   selectedPersonaIndex = safeIndex;
 
-  const buttons = personaTabs.querySelectorAll('.persona-tab');
-  buttons.forEach((btn, btnIdx) => {
-    const isActive = btnIdx === safeIndex;
-    btn.classList.toggle('active', isActive);
-    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
-    btn.tabIndex = isActive ? 0 : -1;
-  });
+  syncPersonaTabActiveStates(safeIndex);
 
   const draft = personaEmailDrafts[safeIndex] || {};
   const text = formatEmailDraftText(draft);
   if (text) {
-    emailOut.innerText = text;
-    updateCopyEmailButtonState(text);
+    setEmailOutput(text, { allowMarkdown: true });
   } else {
-    emailOut.innerText = 'No email available for this persona yet.';
-    updateCopyEmailButtonState('');
+    setEmailOutput('No email available for this persona yet.', { copyTextOverride: '' });
   }
 
   if (telePitchOut) {
@@ -3253,55 +3587,648 @@ function activatePersonaTab(index) {
       setTelePitchOutput(pitchText || 'No telephonic pitch available for this persona yet.');
     }
   }
+
+  renderEmailVersionControls();
+  renderPitchVersionControls();
+  updateRevisionButtonsState();
 }
 
 function renderPersonaEmailDrafts(personasData = [], personaEmailsData = [], telephonicPitchesData = [], fallbackEmail) {
   personaEmailDrafts = mergePersonaEmails(personasData, personaEmailsData, telephonicPitchesData);
 
-  if (personaTabs) {
-    personaTabs.innerHTML = '';
-  }
+  const hasDrafts = personaEmailDrafts.length > 0;
+  const initialIndex = hasDrafts
+    ? (selectedPersonaIndex >= 0 ? Math.min(selectedPersonaIndex, personaEmailDrafts.length - 1) : 0)
+    : 0;
 
-  if (personaEmailDrafts.length && personaTabs) {
-    personaTabs.style.display = '';
+  renderPersonaTabsForContainers(personaEmailDrafts, initialIndex);
 
-    personaEmailDrafts.forEach((draft, idx) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'persona-tab';
-      btn.dataset.index = String(idx);
-      btn.setAttribute('role', 'tab');
-      btn.setAttribute('aria-selected', idx === 0 ? 'true' : 'false');
-      btn.tabIndex = idx === 0 ? 0 : -1;
-
-      const labelBits = [];
-      const name = draft.personaName && draft.personaName.trim() ? draft.personaName.trim() : `Persona ${idx + 1}`;
-      labelBits.push(name);
-      if (draft.personaDesignation) labelBits.push(draft.personaDesignation);
-
-      btn.textContent = labelBits.join(' \u2013 ');
-      personaTabs.appendChild(btn);
-    });
-
-    activatePersonaTab(0);
+  if (hasDrafts) {
+    activatePersonaTab(initialIndex);
   } else {
-    if (personaTabs) personaTabs.style.display = 'none';
     personaEmailDrafts = [];
     selectedPersonaIndex = -1;
     const fallbackText = formatFallbackEmailText(fallbackEmail);
     if (fallbackText) {
-      emailOut.innerText = fallbackText;
-      updateCopyEmailButtonState(fallbackText);
+      setEmailOutput(fallbackText, { allowMarkdown: true });
     } else {
-      emailOut.innerText = 'No email generated yet.';
-      updateCopyEmailButtonState('');
+      setEmailOutput('No email generated yet.', { copyTextOverride: '' });
     }
     if (telephonicPitchErrorMessage) {
       setTelePitchOutput(`Telephonic pitch failed: ${telephonicPitchErrorMessage}`, { isError: true });
     } else {
       setTelePitchOutput('No telephonic pitch generated yet.');
     }
+    renderEmailVersionControls();
+    renderPitchVersionControls();
   }
+
+  updateRevisionButtonsState();
+}
+
+function renderEmailVersionControls() {
+  if (!emailVersionControls) return;
+  emailVersionControls.innerHTML = '';
+  emailVersionControls.style.display = 'none';
+  if (selectedPersonaIndex < 0 || !Array.isArray(personaEmailVersions) || !personaEmailVersions[selectedPersonaIndex]) return;
+  const entry = personaEmailVersions[selectedPersonaIndex];
+  if (!entry || !Array.isArray(entry.versions) || entry.versions.length <= 1) return;
+
+  emailVersionControls.style.display = 'flex';
+  const prev = document.createElement('button');
+  prev.type = 'button';
+  prev.textContent = '\u2190';
+  prev.disabled = entry.activeIndex <= 0;
+  prev.addEventListener('click', () => {
+    setEmailVersion(selectedPersonaIndex, entry.activeIndex - 1);
+  });
+
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.textContent = '\u2192';
+  next.disabled = entry.activeIndex >= entry.versions.length - 1;
+  next.addEventListener('click', () => {
+    setEmailVersion(selectedPersonaIndex, entry.activeIndex + 1);
+  });
+
+  const label = document.createElement('span');
+  label.className = 'version-label';
+  label.textContent = `v${entry.activeIndex + 1}/${entry.versions.length}`;
+
+  emailVersionControls.appendChild(prev);
+  emailVersionControls.appendChild(label);
+  emailVersionControls.appendChild(next);
+}
+
+function renderPitchVersionControls() {
+  if (!pitchVersionControls) return;
+  pitchVersionControls.innerHTML = '';
+  pitchVersionControls.style.display = 'none';
+  if (selectedPersonaIndex < 0 || !Array.isArray(telephonicPitchVersions) || !telephonicPitchVersions[selectedPersonaIndex]) return;
+  const entry = telephonicPitchVersions[selectedPersonaIndex];
+  if (!entry || !Array.isArray(entry.versions) || entry.versions.length <= 1) return;
+
+  pitchVersionControls.style.display = 'flex';
+  const prev = document.createElement('button');
+  prev.type = 'button';
+  prev.textContent = '\u2190';
+  prev.disabled = entry.activeIndex <= 0;
+  prev.addEventListener('click', () => {
+    setPitchVersion(selectedPersonaIndex, entry.activeIndex - 1);
+  });
+
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.textContent = '\u2192';
+  next.disabled = entry.activeIndex >= entry.versions.length - 1;
+  next.addEventListener('click', () => {
+    setPitchVersion(selectedPersonaIndex, entry.activeIndex + 1);
+  });
+
+  const label = document.createElement('span');
+  label.className = 'version-label';
+  label.textContent = `v${entry.activeIndex + 1}/${entry.versions.length}`;
+
+  pitchVersionControls.appendChild(prev);
+  pitchVersionControls.appendChild(label);
+  pitchVersionControls.appendChild(next);
+}
+
+function updateRevisionButtonsState() {
+  const hasPersonas = personaEmailDrafts && personaEmailDrafts.length > 0;
+  const emailEntry = hasPersonas && selectedPersonaIndex >= 0
+    ? personaEmailVersions?.[selectedPersonaIndex]
+    : null;
+  const canReviseEmail = hasPersonas && isLatestVersion(emailEntry);
+  if (reviseEmailPersonaBtn) {
+    reviseEmailPersonaBtn.disabled = !canReviseEmail;
+    reviseEmailPersonaBtn.style.display = '';
+  }
+  if (reviseEmailAllBtn) {
+    reviseEmailAllBtn.disabled = !canReviseEmail;
+    reviseEmailAllBtn.style.display = '';
+  }
+
+  const hasPitches = Array.isArray(activeBriefData?.personas) && activeBriefData.personas.length > 0;
+  const pitchEntry = hasPitches && selectedPersonaIndex >= 0
+    ? telephonicPitchVersions?.[selectedPersonaIndex]
+    : null;
+  const canRevisePitch = hasPitches && isLatestVersion(pitchEntry);
+  if (revisePitchPersonaBtn) {
+    revisePitchPersonaBtn.disabled = !canRevisePitch;
+    revisePitchPersonaBtn.style.display = '';
+  }
+  if (revisePitchAllBtn) {
+    revisePitchAllBtn.disabled = !canRevisePitch;
+    revisePitchAllBtn.style.display = '';
+  }
+}
+
+function setEmailVersion(personaIdx, versionIdx) {
+  if (!activeBriefData || !Array.isArray(personaEmailVersions)) return;
+  if (personaIdx < 0 || personaIdx >= personaEmailVersions.length) return;
+  const entry = personaEmailVersions[personaIdx];
+  if (!entry || !Array.isArray(entry.versions)) return;
+  entry.activeIndex = clampIndex(versionIdx, entry.versions);
+  activeBriefData.personaEmailVersions = personaEmailVersions;
+  activeBriefData.personaEmailVersionIndexes = personaEmailVersions.map((v) => {
+    const idx = clampIndex(
+      typeof v?.activeIndex === 'number' ? v.activeIndex : 0,
+      Array.isArray(v?.versions) ? v.versions : []
+    );
+    return idx < 0 ? 0 : idx;
+  });
+  syncVersionState();
+  const personasData = Array.isArray(activeBriefData.personas) ? activeBriefData.personas : [];
+  const telephonicPitchesData = Array.isArray(activeBriefData.telephonicPitches) ? activeBriefData.telephonicPitches : [];
+  renderPersonaEmailDrafts(personasData, activeBriefData.personaEmails, telephonicPitchesData, activeBriefData.email);
+  activatePersonaTab(personaIdx);
+  persistRevisionToHistory();
+}
+
+function setPitchVersion(personaIdx, versionIdx) {
+  if (!activeBriefData || !Array.isArray(telephonicPitchVersions)) return;
+  if (personaIdx < 0 || personaIdx >= telephonicPitchVersions.length) return;
+  const entry = telephonicPitchVersions[personaIdx];
+  if (!entry || !Array.isArray(entry.versions)) return;
+  entry.activeIndex = clampIndex(versionIdx, entry.versions);
+  activeBriefData.telephonicPitchVersions = telephonicPitchVersions;
+  activeBriefData.telephonicPitchVersionIndexes = telephonicPitchVersions.map((v) => {
+    const idx = clampIndex(
+      typeof v?.activeIndex === 'number' ? v.activeIndex : 0,
+      Array.isArray(v?.versions) ? v.versions : []
+    );
+    return idx < 0 ? 0 : idx;
+  });
+  syncVersionState();
+  const personasData = Array.isArray(activeBriefData.personas) ? activeBriefData.personas : [];
+  const telephonicPitchesData = Array.isArray(activeBriefData.telephonicPitches) ? activeBriefData.telephonicPitches : [];
+  renderPersonaEmailDrafts(personasData, activeBriefData.personaEmails, telephonicPitchesData, activeBriefData.email);
+  activatePersonaTab(personaIdx);
+  renderPitchVersionControls();
+  persistRevisionToHistory();
+}
+
+function formatPersonaLabel(persona = {}, idx = 0) {
+  const name = persona.name || persona.personaName || persona.persona_name || `Persona ${idx + 1}`;
+  const role = persona.designation || persona.personaDesignation || persona.persona_designation || '';
+  return role ? `${name} (${role})` : name;
+}
+
+function formatRevisionCurrentText(type, indices = []) {
+  if (!activeBriefData) return '';
+  const personas = Array.isArray(activeBriefData.personas) ? activeBriefData.personas : [];
+  const emails = Array.isArray(activeBriefData.personaEmails) ? activeBriefData.personaEmails : [];
+  const pitches = Array.isArray(activeBriefData.telephonicPitches) ? activeBriefData.telephonicPitches : [];
+  const parts = [];
+
+  indices.forEach((idx) => {
+    const persona = personas[idx] || {};
+    const label = formatPersonaLabel(persona, idx);
+    if (type === 'email') {
+      const text = formatEmailDraftText(emails[idx] || {}) || 'No email available.';
+      parts.push(`--- ${label} ---\n${text}`);
+    } else {
+      const text = formatTelephonicPitchText(pitches[idx] || {}) || 'No pitch available.';
+      parts.push(`--- ${label} ---\n${text}`);
+    }
+  });
+
+  return parts.join('\n\n');
+}
+
+function formatRevisionPreviewText(type, previewDrafts = []) {
+  const personas = Array.isArray(activeBriefData?.personas) ? activeBriefData.personas : [];
+  const parts = previewDrafts.map(({ personaIndex, draft }) => {
+    const label = formatPersonaLabel(personas[personaIndex] || {}, personaIndex);
+    if (type === 'email') {
+      return `--- ${label} ---\n${formatEmailDraftText(draft || {}) || 'No content returned.'}`;
+    }
+    return `--- ${label} ---\n${formatTelephonicPitchText(draft || {}) || 'No content returned.'}`;
+  });
+  return parts.join('\n\n');
+}
+
+async function persistRevisionToHistory() {
+  if (!currentHistoryId || !activeBriefData) return;
+  try {
+    await sendMessagePromise({
+      action: 'updateResearchHistoryEntry',
+      id: currentHistoryId,
+      result: {
+        personaEmails: Array.isArray(activeBriefData.personaEmails) ? activeBriefData.personaEmails : [],
+        telephonicPitches: Array.isArray(activeBriefData.telephonicPitches) ? activeBriefData.telephonicPitches : [],
+        personaEmailVersions: Array.isArray(personaEmailVersions) ? personaEmailVersions : [],
+        telephonicPitchVersions: Array.isArray(telephonicPitchVersions) ? telephonicPitchVersions : [],
+        personaEmailVersionIndexes: Array.isArray(personaEmailVersions)
+          ? personaEmailVersions.map((v) => {
+            const idx = clampIndex(v.activeIndex || 0, Array.isArray(v.versions) ? v.versions : []);
+            return idx < 0 ? 0 : idx;
+          })
+          : [],
+        telephonicPitchVersionIndexes: Array.isArray(telephonicPitchVersions)
+          ? telephonicPitchVersions.map((v) => {
+            const idx = clampIndex(v.activeIndex || 0, Array.isArray(v.versions) ? v.versions : []);
+            return idx < 0 ? 0 : idx;
+          })
+          : [],
+      },
+    });
+  } catch (err) {
+    console.warn('Failed to persist revision to history', err);
+  }
+}
+
+function applyRevisionPreview(preview, type) {
+  if (!preview || !Array.isArray(preview.drafts) || !activeBriefData) return;
+  const targetPersonaIdx = preview.drafts[0]?.personaIndex ?? 0;
+  preview.drafts.forEach(({ personaIndex, draft }) => {
+    if (type === 'email') {
+      if (!personaEmailVersions[personaIndex]) personaEmailVersions[personaIndex] = buildVersionEntry(draft || {});
+      else {
+        personaEmailVersions[personaIndex].versions.push(draft || {});
+        personaEmailVersions[personaIndex].activeIndex = personaEmailVersions[personaIndex].versions.length - 1;
+      }
+    } else {
+      if (!telephonicPitchVersions[personaIndex]) telephonicPitchVersions[personaIndex] = buildVersionEntry(draft || {});
+      else {
+        telephonicPitchVersions[personaIndex].versions.push(draft || {});
+        telephonicPitchVersions[personaIndex].activeIndex = telephonicPitchVersions[personaIndex].versions.length - 1;
+      }
+    }
+  });
+
+  activeBriefData.personaEmailVersions = personaEmailVersions;
+  activeBriefData.telephonicPitchVersions = telephonicPitchVersions;
+  if (type === 'pitch') {
+    activeBriefData.telephonicPitchError = '';
+    telephonicPitchErrorMessage = '';
+    activeBriefData.telephonicPitchAttempts = [];
+    telephonicPitchDebugAttempts = [];
+  }
+  syncVersionState();
+  const personasData = Array.isArray(activeBriefData.personas) ? activeBriefData.personas : [];
+  renderPersonaEmailDrafts(personasData, activeBriefData.personaEmails, activeBriefData.telephonicPitches, activeBriefData.email);
+  const safeIdx = clampIndex(targetPersonaIdx, personaEmailDrafts);
+  if (safeIdx >= 0) activatePersonaTab(safeIdx);
+  renderPitchVersionControls();
+  updateRevisionButtonsState();
+  persistRevisionToHistory();
+}
+
+function openRevisionPlayground({ type = 'email', scope = 'single' } = {}) {
+  if (!activeBriefData) return;
+  const personas = Array.isArray(activeBriefData.personas) ? activeBriefData.personas : [];
+  const personasAvailable = personas.length;
+  if (!personasAvailable) return;
+  const personaIdx = selectedPersonaIndex >= 0 ? selectedPersonaIndex : 0;
+  const indices = scope === 'all' ? personas.map((_, idx) => idx) : [personaIdx];
+  if (!indices.length) return;
+
+  const currentText = formatRevisionCurrentText(type, indices);
+  revisionModalState = {
+    type,
+    scope,
+    instructions: '',
+    loading: false,
+    error: '',
+    preview: null,
+    indices,
+    status: '',
+    messageHistory: [{
+      role: 'assistant',
+      title: 'Initial version',
+      content: currentText || 'Nothing to show yet.',
+    }],
+  };
+
+  openModal({
+    title: `Revision Playground (${type === 'email' ? 'Email' : 'Telephonic pitch'})`,
+    render: ({ body, footer, close }) => {
+      if (!body || !footer) return;
+      body.innerHTML = '';
+      footer.innerHTML = '';
+      body.classList.add('revision-body');
+
+      const scopeHelper = document.createElement('div');
+      scopeHelper.className = 'modal-helper';
+      const personaNames = indices.map((idx) => formatPersonaLabel(personas[idx] || {}, idx)).join(', ');
+      scopeHelper.textContent = scope === 'all'
+        ? `Revising all personas (${personaNames}).`
+        : `Revising: ${personaNames}.`;
+
+      const chatWrapper = document.createElement('div');
+      chatWrapper.className = 'revision-chat';
+
+      const messageList = document.createElement('div');
+      messageList.className = 'revision-messages';
+      chatWrapper.appendChild(messageList);
+
+      const inputRow = document.createElement('div');
+      inputRow.className = 'revision-input-row';
+      const instructionsLabel = document.createElement('label');
+      instructionsLabel.textContent = 'Ask for a revision';
+      const instructionsInput = document.createElement('textarea');
+      instructionsInput.rows = 3;
+      instructionsInput.className = 'revision-instructions';
+      instructionsInput.placeholder = 'e.g., shorten to 3 sentences, highlight security compliance, keep CTA strong.';
+      inputRow.appendChild(instructionsLabel);
+      inputRow.appendChild(instructionsInput);
+      const sendBtn = document.createElement('button');
+      sendBtn.type = 'button';
+      sendBtn.className = 'primary';
+      sendBtn.textContent = 'Send';
+      inputRow.appendChild(sendBtn);
+
+      const statusEl = document.createElement('div');
+      statusEl.className = 'modal-helper revision-status';
+
+      body.appendChild(scopeHelper);
+      body.appendChild(chatWrapper);
+      body.appendChild(inputRow);
+      body.appendChild(statusEl);
+
+      const applyBtn = document.createElement('button');
+      applyBtn.type = 'button';
+      applyBtn.textContent = 'Update all drafts';
+      applyBtn.disabled = true;
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.addEventListener('click', () => close());
+
+      footer.appendChild(cancelBtn);
+      footer.appendChild(applyBtn);
+
+      const renderMessages = () => {
+        if (!revisionModalState) return;
+        const history = Array.isArray(revisionModalState.messageHistory) ? revisionModalState.messageHistory : [];
+        messageList.innerHTML = '';
+        if (!history.length) {
+          const empty = document.createElement('div');
+          empty.className = 'modal-helper';
+          empty.textContent = 'Messages will appear here after you send a revision.';
+          messageList.appendChild(empty);
+          return;
+        }
+        history.forEach((msg) => {
+          const bubble = document.createElement('div');
+          bubble.className = `revision-message ${msg.role === 'user' ? 'user' : 'assistant'}`;
+          const heading = document.createElement('div');
+          heading.className = 'revision-message-title';
+          heading.textContent = msg.title || (msg.role === 'user' ? 'Instruction' : 'Response');
+          const content = document.createElement('div');
+          content.className = 'revision-message-content outputBox richText';
+          content.innerHTML = markdownToHtml(msg.content || '');
+          bubble.appendChild(heading);
+          bubble.appendChild(content);
+
+          if (msg.role === 'assistant' && msg.preview && Array.isArray(msg.preview.drafts) && msg.preview.drafts.length) {
+            const actions = document.createElement('div');
+            actions.className = 'revision-preview-actions';
+            const updateBtn = document.createElement('button');
+            updateBtn.type = 'button';
+            updateBtn.className = 'primary';
+            updateBtn.textContent = 'Update draft';
+            updateBtn.disabled = revisionModalState?.loading;
+            updateBtn.addEventListener('click', () => {
+              applyRevisionPreview({ drafts: msg.preview.drafts }, type);
+              close();
+            });
+            actions.appendChild(updateBtn);
+            bubble.appendChild(actions);
+          }
+
+          messageList.appendChild(bubble);
+        });
+        messageList.scrollTop = messageList.scrollHeight;
+      };
+
+      const appendUserMessage = (history, instructionText) => {
+        const next = Array.isArray(history) ? [...history] : [];
+        next.push({
+          role: 'user',
+          title: 'Instruction',
+          content: instructionText || 'No instructions provided.',
+        });
+        return next;
+      };
+
+      const appendAssistantMessage = (history, previewText, previewPayload) => {
+        const next = Array.isArray(history) ? [...history] : [];
+        next.push({
+          role: 'assistant',
+          title: 'Revised preview',
+          content: previewText || 'No content returned.',
+          preview: previewPayload,
+        });
+        return next;
+      };
+
+      const refreshUI = () => {
+        if (!revisionModalState) return;
+        instructionsInput.value = revisionModalState.instructions || '';
+        sendBtn.disabled = revisionModalState.loading;
+        if (revisionModalState.loading) {
+          sendBtn.innerHTML = '<span class="spinner" aria-hidden="true"></span>Sending...';
+        } else {
+          sendBtn.textContent = 'Send';
+        }
+        applyBtn.disabled = revisionModalState.loading || !revisionModalState.preview;
+        if (revisionModalState.error) {
+          statusEl.textContent = revisionModalState.error;
+          statusEl.style.color = '#b91c1c';
+        } else if (revisionModalState.loading) {
+          statusEl.textContent = 'Revising...';
+          statusEl.style.color = '';
+        } else if (revisionModalState.status) {
+          statusEl.textContent = revisionModalState.status;
+          statusEl.style.color = '';
+        } else {
+          statusEl.textContent = '';
+        }
+        renderMessages();
+      };
+
+      instructionsInput.addEventListener('input', (evt) => {
+        revisionModalState = { ...revisionModalState, instructions: evt.target.value };
+      });
+
+      instructionsInput.addEventListener('keydown', (evt) => {
+        if (evt.key !== 'Enter' || evt.shiftKey || evt.ctrlKey || evt.metaKey || evt.altKey || evt.isComposing) return;
+        if (sendBtn.disabled || revisionModalState?.loading) return;
+        evt.preventDefault();
+        runRevision();
+      });
+
+      const runRevision = async () => {
+        if (!revisionModalState) return;
+        const instructions = (revisionModalState.instructions || '').trim();
+        const pendingHistory = appendUserMessage(revisionModalState.messageHistory, instructions);
+        revisionModalState = {
+          ...revisionModalState,
+          loading: true,
+          error: '',
+          status: '',
+          instructions: '',
+          messageHistory: pendingHistory,
+        };
+        refreshUI();
+        try {
+          const company = (companyEl?.value || activeBriefData?.company_name || '').trim();
+          const product = (productEl?.value || '').trim();
+          const location = (locationEl?.value || '').trim();
+          const pitchingOrg = ((cachedPitchingCompany || await pitchingCompanyLoadPromise) || '').trim();
+          const payloadBase = {
+            company,
+            product,
+            location,
+            instructions,
+            pitchingOrg,
+          };
+          let result = null;
+          if (type === 'email') {
+            if (scope === 'all') {
+              const personasSubset = revisionModalState.indices.map((idx) => personas[idx] || {});
+              const emailsSubset = revisionModalState.indices.map((idx) => {
+                const entry = personaEmailVersions[idx];
+                if (entry && Array.isArray(entry.versions)) return entry.versions[entry.activeIndex] || {};
+                return activeBriefData?.personaEmails?.[idx] || {};
+              });
+              result = await sendMessagePromise({
+                action: 'reviseAllPersonaEmails',
+                personas: personasSubset,
+                emails: emailsSubset,
+                ...payloadBase,
+              });
+              const drafts = Array.isArray(result?.results)
+                ? result.results.filter((r) => !r.error && r.draft).map((r) => ({
+                  personaIndex: revisionModalState.indices[r.personaIndex] ?? r.personaIndex ?? 0,
+                  draft: r.draft,
+                }))
+                : [];
+              if (!drafts.length) {
+                throw new Error(result?.results?.[0]?.error || 'Revision failed.');
+              }
+              revisionModalState = {
+                ...revisionModalState,
+                preview: { drafts },
+                loading: false,
+                status: 'Preview ready.',
+                messageHistory: appendAssistantMessage(
+                  pendingHistory,
+                  formatRevisionPreviewText(type, drafts),
+                  { drafts },
+                ),
+              };
+            } else {
+              const idx = revisionModalState.indices[0];
+              const persona = personas[idx] || {};
+              const entry = personaEmailVersions[idx];
+              const emailDraft = entry?.versions?.[entry.activeIndex] || activeBriefData?.personaEmails?.[idx] || {};
+              result = await sendMessagePromise({
+                action: 'revisePersonaEmail',
+                persona,
+                email: emailDraft,
+                ...payloadBase,
+              });
+              if (result?.error || !result?.draft) {
+                throw new Error(result?.error || 'Revision failed.');
+              }
+              revisionModalState = {
+                ...revisionModalState,
+                preview: { drafts: [{ personaIndex: idx, draft: result.draft }] },
+                loading: false,
+                status: 'Preview ready.',
+                messageHistory: appendAssistantMessage(
+                  pendingHistory,
+                  formatRevisionPreviewText(type, [{ personaIndex: idx, draft: result.draft }]),
+                  { drafts: [{ personaIndex: idx, draft: result.draft }] },
+                ),
+              };
+            }
+          } else {
+            if (scope === 'all') {
+              const personasSubset = revisionModalState.indices.map((idx) => personas[idx] || {});
+              const pitchSubset = revisionModalState.indices.map((idx) => {
+                const entry = telephonicPitchVersions[idx];
+                if (entry && Array.isArray(entry.versions)) return entry.versions[entry.activeIndex] || {};
+                return activeBriefData?.telephonicPitches?.[idx] || {};
+              });
+              result = await sendMessagePromise({
+                action: 'reviseAllPersonaPitches',
+                personas: personasSubset,
+                pitches: pitchSubset,
+                ...payloadBase,
+              });
+              const drafts = Array.isArray(result?.results)
+                ? result.results.filter((r) => !r.error && r.draft).map((r) => ({
+                  personaIndex: revisionModalState.indices[r.personaIndex] ?? r.personaIndex ?? 0,
+                  draft: r.draft,
+                }))
+                : [];
+              if (!drafts.length) {
+                throw new Error(result?.results?.[0]?.error || 'Revision failed.');
+              }
+              revisionModalState = {
+                ...revisionModalState,
+                preview: { drafts },
+                loading: false,
+                status: 'Preview ready.',
+                messageHistory: appendAssistantMessage(
+                  pendingHistory,
+                  formatRevisionPreviewText(type, drafts),
+                  { drafts },
+                ),
+              };
+            } else {
+              const idx = revisionModalState.indices[0];
+              const persona = personas[idx] || {};
+              const entry = telephonicPitchVersions[idx];
+              const pitchDraft = entry?.versions?.[entry.activeIndex] || activeBriefData?.telephonicPitches?.[idx] || {};
+              result = await sendMessagePromise({
+                action: 'revisePersonaPitch',
+                persona,
+                pitch: pitchDraft,
+                ...payloadBase,
+              });
+              if (result?.error || !result?.draft) {
+                throw new Error(result?.error || 'Revision failed.');
+              }
+              revisionModalState = {
+                ...revisionModalState,
+                preview: { drafts: [{ personaIndex: idx, draft: result.draft }] },
+                loading: false,
+                status: 'Preview ready.',
+                messageHistory: appendAssistantMessage(
+                  pendingHistory,
+                  formatRevisionPreviewText(type, [{ personaIndex: idx, draft: result.draft }]),
+                  { drafts: [{ personaIndex: idx, draft: result.draft }] },
+                ),
+              };
+            }
+          }
+        } catch (err) {
+          revisionModalState = { ...revisionModalState, loading: false, error: err?.message || String(err) };
+        }
+        refreshUI();
+      };
+
+      sendBtn.addEventListener('click', runRevision);
+      applyBtn.addEventListener('click', () => {
+        if (!revisionModalState?.preview) return;
+        applyRevisionPreview(revisionModalState.preview, type);
+        close();
+      });
+
+      refreshUI();
+      return () => {
+        revisionModalState = null;
+        body.classList.remove('revision-body');
+      };
+    },
+  });
 }
 
 function renderResultView(data = {}) {

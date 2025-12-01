@@ -448,12 +448,34 @@ button.primary:hover:not(:disabled) {
     box-shadow: var(--shadow-strong);
 }
 
+.modal-container.modal-maximized {
+    width: min(1100px, 96vw);
+    max-height: 96vh;
+    height: 96vh;
+}
+
+.modal-body {
+    overflow-y: auto;
+    padding-right: 4px;
+    padding-bottom: 16px;
+    margin-bottom: 16px;
+    flex: 1;
+    min-height: 0;
+}
+
 .modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
     margin-bottom: 12px;
+}
+
+#modalMaximize {
+    margin-left: auto;
+    font-size: 1.1rem;
+    min-width: 40px;
+    padding: 8px 10px;
 }
 
 .modal-header h3 {
@@ -468,17 +490,121 @@ button.primary:hover:not(:disabled) {
     padding: 4px 8px;
 }
 
-.modal-body {
-    overflow-y: auto;
-    padding-right: 4px;
-    margin-bottom: 16px;
-}
-
 .modal-footer {
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 10px;
+}
+
+.revision-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 420px;
+}
+
+.revision-chat {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.revision-messages {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-surface-alt);
+    overflow-y: auto;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.revision-message {
+    padding: 0;
+    border-radius: 12px;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    max-width: 100%;
+}
+
+.revision-message.user {
+    margin-left: auto;
+}
+
+.revision-message.assistant {
+    margin-right: auto;
+}
+
+.revision-message-title {
+    margin: 0 0 6px 0;
+    font-weight: 600;
+    color: var(--color-text-strong);
+}
+
+.revision-message-content {
+    margin: 0;
+    width: 100%;
+    padding: 12px 14px;
+}
+
+.revision-message.user .revision-message-content {
+    background: var(--color-primary-soft);
+    border-color: var(--color-primary-soft-border);
+}
+
+.revision-message.assistant .revision-message-content {
+    background: var(--color-surface);
+    border-color: var(--color-border);
+}
+
+.revision-input-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-soft);
+    flex-wrap: wrap;
+    max-width: 820px;
+}
+
+.revision-input-row label {
+    font-weight: 600;
+    color: var(--color-text-strong);
+    width: 100%;
+}
+
+.revision-instructions {
+    width: 100%;
+    max-width: 720px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--color-border-muted);
+    background: var(--color-surface-soft);
+    color: var(--color-text);
+    font-size: 0.98rem;
+    resize: none;
+    min-height: 120px;
+    max-height: 180px;
+    overflow: auto;
+    outline: none;
+}
+
+.revision-instructions:focus {
+    border-color: var(--color-primary);
+    box-shadow: var(--shadow-focus-ring);
+}
+
+.revision-status {
+    min-height: 18px;
 }
 
 .modal-section {
@@ -861,6 +987,11 @@ button.primary:hover:not(:disabled) {
     display: inline-block;
 }
 
+button .spinner {
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
 @keyframes spin {
     to {
         transform: rotate(360deg);
@@ -938,15 +1069,14 @@ h3, h4 {
 }
 
 /* Fixes issue 1: email draft spills out */
-pre {
-    background: var(--color-primary-soft); /* Light blue background */
+.outputBox {
+    background: var(--color-primary-soft);
     padding: 15px;
     border-radius: 8px;
     border: 1px solid var(--color-primary-soft-border);
-    /* Essential: these properties ensure long lines wrap instead of overflowing horizontally */
-    white-space: pre-wrap; 
-    word-wrap: break-word; 
-    overflow-x: hidden; /* Prevent horizontal scrollbar */
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-x: hidden;
     font-size: 1rem;
     line-height: 1.6;
 }
@@ -954,6 +1084,44 @@ pre {
 #emailOut {
     width: 100%;
     min-height: 200px;
+}
+
+.richText {
+    white-space: normal;
+}
+
+.richText p {
+    margin: 0 0 10px 0;
+}
+
+.richText ul,
+.richText ol {
+    margin: 0 0 12px 20px;
+    padding-left: 14px;
+}
+
+.richText li + li {
+    margin-top: 6px;
+}
+
+.richText strong {
+    color: var(--color-text-strong);
+}
+
+.richText code {
+    background: var(--color-surface-soft);
+    border: 1px solid var(--color-border-muted);
+    border-radius: 6px;
+    padding: 2px 6px;
+    font-size: 0.95em;
+}
+
+.richText pre {
+    background: var(--color-surface-soft);
+    border-radius: 8px;
+    border: 1px solid var(--color-border-muted);
+    padding: 10px;
+    overflow-x: auto;
 }
 
 #emailSection {
@@ -968,6 +1136,22 @@ pre {
     justify-content: space-between;
     gap: 8px;
     margin-top: 4px;
+}
+
+.telePitchHeaderLeft,
+.emailHeaderLeft {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.telePitchActions,
+.emailHeaderActions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .telePitchHint {
@@ -997,17 +1181,33 @@ pre {
 }
 
 #copyEmail {
-    background-color: var(--color-primary-strong); /* Tailwind blue-700 */
+    background: var(--color-primary-strong); /* Solid fill so text stays legible in light mode */
     color: var(--color-primary-contrast);
     padding: 8px 14px;
     font-size: 0.9rem;
+    border: none;
+    box-shadow: var(--shadow-soft);
 }
 
 #copyEmail:hover:not(:disabled) {
-    background-color: var(--color-primary-darker); /* Tailwind blue-800 */
+    background: var(--color-primary-darker); /* Tailwind blue-800 */
 }
 
-#personaTabs {
+.revisionActionRow {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.copyActionRow {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 8px;
+}
+
+#personaTabs,
+#telePersonaTabs {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
@@ -1034,6 +1234,89 @@ pre {
     border-color: var(--color-secondary-strong);
     color: var(--color-primary-contrast);
 }
+
+.versionControls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+}
+
+.versionControls-inline {
+    justify-content: flex-end;
+    margin-top: 10px;
+}
+
+.versionControls .version-label {
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+.versionControls button {
+    padding: 4px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.versionControls button:hover:not(:disabled) {
+    background: var(--color-primary-pill);
+    border-color: var(--color-primary-soft-border);
+}
+
+.versionControls button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.revision-preview-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    margin-top: 8px;
+}
+
+.revision-preview-grid pre {
+    min-height: 160px;
+}
+
+.revision-preview-card {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 12px;
+    background: var(--color-surface);
+    box-shadow: var(--shadow-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.revision-preview-card h5 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--color-text);
+}
+
+.revision-preview-card pre {
+    background: var(--color-surface-alt);
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    margin: 0;
+    white-space: pre-wrap;
+}
+
+.revision-preview-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
 
 #apiKeySection {
     padding: 10px 0;

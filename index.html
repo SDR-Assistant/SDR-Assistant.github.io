@@ -91,17 +91,36 @@
                 <h4>Personas</h4><div id="personas"></div>
                 <div id="emailSection">
                   <div class="emailHeader">
-                    <h4>Generated Emails</h4>
-                    <button id="copyEmail" type="button">Copy Email</button>
+                    <div class="emailHeaderLeft">
+                      <h4>Generated Emails</h4>
+                    </div>
                   </div>
                   <div id="personaTabs" role="tablist" aria-label="Persona email drafts"></div>
-                  <pre id="emailOut"></pre>
+                  <div class="copyActionRow">
+                    <button id="copyEmail" type="button">Copy Email</button>
+                  </div>
+                  <div id="emailOut" class="outputBox richText" aria-live="polite"></div>
+                  <div id="emailVersionControls" class="versionControls versionControls-inline" aria-live="polite"></div>
+                  <div class="revisionActionRow">
+                    <button id="reviseEmailPersona" type="button" class="ghost">Rewrite this email</button>
+                    <button id="reviseEmailAll" type="button" class="ghost">Rewrite all emails</button>
+                  </div>
                   <div id="telePitchSection">
                     <div class="telePitchHeader">
-                      <h4>Telephonic Pitch</h4>
-                      <span class="telePitchHint">Updates with persona selection.</span>
+                      <div class="telePitchHeaderLeft">
+                        <h4>Telephonic Pitch</h4>
+                      </div>
+                      <div class="telePitchActions">
+                        <span class="telePitchHint">Updates with persona selection.</span>
+                      </div>
                     </div>
-                    <pre id="telePitchOut">No telephonic pitch generated yet.</pre>
+                    <div id="telePersonaTabs" role="tablist" aria-label="Persona telephonic pitch drafts"></div>
+                    <pre id="telePitchOut" class="outputBox">No telephonic pitch generated yet.</pre>
+                    <div id="pitchVersionControls" class="versionControls versionControls-inline" aria-live="polite"></div>
+                    <div class="revisionActionRow">
+                      <button id="revisePitchPersona" type="button" class="ghost">Rewrite this pitch</button>
+                      <button id="revisePitchAll" type="button" class="ghost">Rewrite all pitches</button>
+                    </div>
                   </div>
                 </div>
               </div>

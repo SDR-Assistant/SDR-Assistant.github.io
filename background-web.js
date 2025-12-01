@@ -11,8 +11,10 @@ const TELEMETRY_ENDPOINT_KEY = "telemetryEndpoint";
 const TELEMETRY_DEFAULT_ENDPOINT = "http://bunserv.duckdns.org:8000/logs";
 const TELEMETRY_FLUSH_ALARM = "telemetryFlushAlarm";
 const TELEMETRY_FLUSH_INTERVAL_MINUTES = 5;
-const TELEMETRY_BATCH_SIZE = 1;
+const TELEMETRY_BATCH_SIZE = 10;
 const TELEMETRY_QUEUE_LIMIT = 200;
+const INSTALLATION_ID_KEY = "installationId";
+const LAST_ACTIVE_PING_DATE_KEY = "lastActivePingDate";
 
 function emitBriefProgress({ runId, current, total, label }) {
   if (!runId) return;
@@ -287,6 +289,39 @@ function buildResearchCycleMetric({ startTimeMs, endTimeMs, request = {}, runId 
   };
 }
 
+function buildSearchToExportConversionMetric({
+  exportId,
+  occurredAtMs,
+  selectionType = "all",
+  selectionCount = 0,
+  format = "",
+  templateId = "",
+  researchEntryIds = [],
+  resultRowCount = 0,
+}) {
+  const timestamp = typeof occurredAtMs === "number" ? occurredAtMs : Date.now();
+  const normalizedSelectionType = ["all", "date", "custom"].includes(selectionType) ? selectionType : "all";
+  const ids = Array.isArray(researchEntryIds)
+    ? researchEntryIds.map((id) => (id == null ? "" : String(id))).filter(Boolean)
+    : [];
+
+  return {
+    kind: "search_to_export_conversion",
+    occurredAt: new Date(timestamp).toISOString(),
+    export: {
+      id: exportId ? String(exportId) : `export-${timestamp}`,
+      format: format === "md" ? "md" : "xlsx",
+      selectionType: normalizedSelectionType,
+      selectionCount: Math.max(0, Number(selectionCount) || 0),
+      templateId: templateId ? String(templateId) : "",
+      resultRowCount: Math.max(0, Number(resultRowCount) || 0),
+    },
+    searchContext: {
+      researchEntryIds: ids,
+    },
+  };
+}
+
 async function getTelemetryEndpoint() {
   const stored = await chrome.storage.local.get([TELEMETRY_ENDPOINT_KEY]);
   const storedEndpoint =
@@ -294,6 +329,68 @@ async function getTelemetryEndpoint() {
       ? stored[TELEMETRY_ENDPOINT_KEY].trim()
       : "";
   return storedEndpoint || TELEMETRY_DEFAULT_ENDPOINT;
+}
+
+function generateInstallId() {
+  try {
+    if (typeof crypto !== "undefined") {
+      if (typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+      }
+      if (typeof crypto.getRandomValues === "function") {
+        const buf = new Uint8Array(16);
+        crypto.getRandomValues(buf);
+        return `inst-${Array.from(buf)
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("")}`;
+      }
+    }
+  } catch (err) {
+    // Fall through to time/random based id
+  }
+  return `inst-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function getOrCreateInstallationId() {
+  const stored = await chrome.storage.local.get([INSTALLATION_ID_KEY]);
+  const existingId = typeof stored[INSTALLATION_ID_KEY] === "string" ? stored[INSTALLATION_ID_KEY].trim() : "";
+  if (existingId) return existingId;
+
+  const newId = generateInstallId();
+  await chrome.storage.local.set({ [INSTALLATION_ID_KEY]: newId });
+  return newId;
+}
+
+function buildWeeklyActiveUserMetric({ installationId, occurredAtMs, trigger = "unknown" }) {
+  const ts = typeof occurredAtMs === "number" ? occurredAtMs : Date.now();
+  const version = chrome.runtime?.getManifest?.().version || "unknown";
+  return {
+    kind: "weekly_active_user",
+    occurredAt: new Date(ts).toISOString(),
+    installationId: installationId || "unknown",
+    trigger,
+    appVersion: version,
+  };
+}
+
+async function markWeeklyActiveUser(trigger = "unknown") {
+  try {
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const stored = await chrome.storage.local.get([LAST_ACTIVE_PING_DATE_KEY]);
+    if (stored && stored[LAST_ACTIVE_PING_DATE_KEY] === todayKey) return;
+
+    const installationId = await getOrCreateInstallationId();
+    const metric = buildWeeklyActiveUserMetric({
+      installationId,
+      occurredAtMs: Date.now(),
+      trigger,
+    });
+    await chrome.storage.local.set({ [LAST_ACTIVE_PING_DATE_KEY]: todayKey });
+    enqueueTelemetryMetric(metric).catch(() => {});
+    flushTelemetryQueue().catch(() => {});
+  } catch (err) {
+    console.warn("Failed to record weekly active user metric", err);
+  }
 }
 
 async function enqueueTelemetryMetric(metric) {
@@ -1066,10 +1163,30 @@ async function saveResearchHistoryEntry(request, result) {
         hq_lookup_error: result.hq_lookup_error || "",
         personas: Array.isArray(result.personas) ? result.personas : [],
         personaEmails: Array.isArray(result.personaEmails) ? result.personaEmails : [],
+        personaEmailVersions: Array.isArray(result.personaEmailVersions)
+          ? result.personaEmailVersions
+          : (Array.isArray(result.personaEmails)
+              ? result.personaEmails.map((draft) => ({ versions: [draft], activeIndex: 0 }))
+              : []),
         industry_sector: typeof result.industry_sector === "string" ? result.industry_sector : "",
         telephonicPitches: Array.isArray(result.telephonicPitches) ? result.telephonicPitches : [],
+        telephonicPitchVersions: Array.isArray(result.telephonicPitchVersions)
+          ? result.telephonicPitchVersions
+          : (Array.isArray(result.telephonicPitches)
+              ? result.telephonicPitches.map((draft) => ({ versions: [draft], activeIndex: 0 }))
+              : []),
         telephonicPitchError: typeof result.telephonicPitchError === "string" ? result.telephonicPitchError : "",
         telephonicPitchAttempts: Array.isArray(result.telephonicPitchAttempts) ? result.telephonicPitchAttempts : [],
+        personaEmailVersionIndexes: Array.isArray(result.personaEmailVersionIndexes)
+          ? result.personaEmailVersionIndexes
+          : (Array.isArray(result.personaEmailVersions)
+              ? result.personaEmailVersions.map((v) => v.activeIndex || 0)
+              : []),
+        telephonicPitchVersionIndexes: Array.isArray(result.telephonicPitchVersionIndexes)
+          ? result.telephonicPitchVersionIndexes
+          : (Array.isArray(result.telephonicPitchVersions)
+              ? result.telephonicPitchVersions.map((v) => v.activeIndex || 0)
+              : []),
         email: result.email || {},
         overview_error: result.overview_error || "",
         persona_error: result.persona_error || "",
@@ -1080,6 +1197,23 @@ async function saveResearchHistoryEntry(request, result) {
   } catch (err) {
     console.warn("Failed to persist research history", err);
     return null;
+  }
+}
+
+async function updateResearchHistoryEntry(id, resultUpdates = {}) {
+  try {
+    const data = await chrome.storage.local.get([RESEARCH_HISTORY_KEY]);
+    const history = Array.isArray(data[RESEARCH_HISTORY_KEY]) ? data[RESEARCH_HISTORY_KEY] : [];
+    const idx = history.findIndex((entry) => entry && entry.id === id);
+    if (idx === -1) return { ok: false, error: "Entry not found" };
+    const existing = history[idx];
+    const mergedResult = { ...(existing.result || {}), ...(resultUpdates || {}) };
+    history[idx] = { ...existing, result: mergedResult };
+    await chrome.storage.local.set({ [RESEARCH_HISTORY_KEY]: history });
+    return { ok: true, entry: history[idx] };
+  } catch (err) {
+    console.warn("Failed to update research history", err);
+    return { ok: false, error: err?.message || String(err) };
   }
 }
 
@@ -1216,6 +1350,7 @@ function buildTelephonicPitchPrompt({ personas, company, location, product, docs
   const personaSummary = summarizePersonasForTelepitch(personas);
   const pitchingOrg = (pitchFromCompany && pitchFromCompany.trim()) || "your company";
   const prospectLabel = company || "the target company";
+  const personaCount = Array.isArray(personas) ? personas.length : 0;
   return `You are a helpful assistant. Generate a concise telephonic sales pitch for the following:
   Perspective:
       - You represent ${pitchingOrg}. You are pitching ${prospectLabel}, who is the prospect.
@@ -1243,12 +1378,162 @@ function buildTelephonicPitchPrompt({ personas, company, location, product, docs
   Context docs (first 4000 chars each):
   ${docsText || "(no docs provided)"}
 
-  Output JSON in this structure EXACTLY. Do not include \`\`\`json markdown wrappers.
+  Output JSON in this structure EXACTLY. Return one entry per persona in the same order provided. Include persona_name in every entry so it maps back cleanly. Do not include \`\`\`json markdown wrappers.
+  Number of personas to cover: ${personaCount || "0"} (must match telephonic_pitches array length).
   {
-    "telephonic_pitches":""
+    "telephonic_pitches":[
+      {
+        "persona_name":"",
+        "full_pitch":""
+      }
+    ]
+  }
+  Example with two personas:
+  {
+    "telephonic_pitches":[
+      {"persona_name":"<Persona 1 Name>","full_pitch":""},
+      {"persona_name":"<Persona 2 Name>","full_pitch":""}
+    ]
   }
 
   Keep each section crisp and action-oriented.`;
+}
+
+function buildPersonaEmailsPrompt({ personas, company, location, product, docsText, pitchFromCompany }) {
+  const personaSummary = summarizePersonasForTelepitch(personas);
+  const pitchingOrg = (pitchFromCompany && pitchFromCompany.trim()) || "your company";
+  const prospectLabel = company || "the target company";
+  return `You are a helpful assistant. Generate outbound email drafts for each persona.
+Prospect company: ${prospectLabel}
+Pitching organization (you): ${pitchingOrg}
+Location: ${location || "N/A"}
+Product: ${product}
+
+Known personas:
+${personaSummary || "None provided. Infer from context."}
+
+Context docs (first 4000 chars each):
+${docsText || "(no docs provided)"}
+
+Output JSON exactly. Create one entry per persona in the same order provided:
+{
+  "persona_emails": [
+    {"persona_name": "", "subject": "", "body": ""}
+  ]
+}
+
+Rules:
+- ${prospectLabel} is the prospect. Every email must be written from ${pitchingOrg}'s perspective pitching ${prospectLabel} on ${product}. Never reverse these roles.
+- Create a separate subject and body for every persona listed; ensure persona_name matches the persona you are writing for.
+- Emails must include a crisp subject and concise, sales-forward body tailored to that persona. Make the email very short, crisp and visually appealing with numbers and statistics from the documents uploaded. Here's an example of an email template:
+    Subject: PVR INOX: Guaranteed 90% Faster Content Delivery with IBM Aspera.
+
+      Dear [Name],
+
+      PVR INOX's scale (over 1,700 screens) requires guaranteed, instantaneous content flow. Current transfer methods are slow, unreliable, and expensive.
+
+      IBM Aspera changes the math:
+
+      Speed: A 100GB DCP asset transfers in under 30 minutes, down from the standard 4-8 hours. This is a 90% time savings.
+
+      Efficiency: We guarantee 95%+ network utilization, maximizing the ROI on your current bandwidth investment.
+
+      Risk: Near-zero transfer failure, eliminating costly re-sends and critical release delays.
+
+      Precedent: Major global studio 'X' leveraged Aspera to cut their distribution window by 50%.
+
+      We eliminate content bottlenecks, securing your revenue and saving substantial operational costs.
+
+      Are you available for a sharp 10-minute ROI discussion this week?
+
+      Sincerely,
+
+      [Your Name] [Your Title]`;
+}
+
+function buildEmailRevisionPrompt({ persona = {}, company, location, product, baseEmail = {}, instructions = "", pitchingOrg }) {
+  const personaName = persona.name || persona.personaName || persona.persona_name || "the persona";
+  const designation = persona.designation || persona.personaDesignation || persona.persona_designation || "";
+  const department = persona.department || persona.personaDepartment || persona.persona_department || "";
+  const subject = (baseEmail && baseEmail.subject) || "";
+  const body = (baseEmail && baseEmail.body) || "";
+  const hasExisting = subject || body;
+
+  const personaLine = [
+    `Persona: ${personaName}`,
+    designation ? `Title: ${designation}` : null,
+    department ? `Department: ${department}` : null,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+
+  return `You are a helpful sales copywriter. Revise the outbound email for the given persona.
+Prospect company: ${company || "N/A"}
+Location: ${location || "N/A"}
+Product: ${product || "N/A"}
+Pitching organization (you): ${pitchingOrg || "your company"}
+${personaLine}
+
+${hasExisting ? "Existing email draft:" : "No existing draft. Create a fresh email:"}
+Subject: ${subject || "(none)"}
+Body:
+${body || "(none)"}
+
+User instructions to apply:
+${instructions || "(none)"}
+
+Rules:
+- Keep it concise, sales-forward, and tailored to the persona.
+- Keep the subject crisp; keep the body short and skimmable.
+- Preserve correct roles: you represent ${pitchingOrg || "your company"}, pitching ${company || "the target company"} on ${product || "the product"}.
+
+Return JSON ONLY:
+{"subject": "", "body": ""}`;
+}
+
+function buildPitchRevisionPrompt({ persona = {}, company, location, product, basePitch = {}, instructions = "", pitchingOrg }) {
+  const personaName = persona.name || persona.personaName || persona.persona_name || "the persona";
+  const designation = persona.designation || persona.personaDesignation || persona.persona_designation || "";
+  const department = persona.department || persona.personaDepartment || persona.persona_department || "";
+  const hasExisting =
+    basePitch.callGoal ||
+    basePitch.call_goal ||
+    basePitch.opener ||
+    basePitch.discoveryQuestion ||
+    basePitch.discovery_question ||
+    basePitch.script ||
+    basePitch.full_pitch;
+
+  const personaLine = [
+    `Persona: ${personaName}`,
+    designation ? `Title: ${designation}` : null,
+    department ? `Department: ${department}` : null,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+
+  return `You are a helpful sales assistant. Revise the telephonic pitch for this persona.
+Prospect company: ${company || "N/A"}
+Location: ${location || "N/A"}
+Product: ${product || "N/A"}
+Pitching organization (you): ${pitchingOrg || "your company"}
+${personaLine}
+
+${hasExisting ? "Existing pitch sections (rewrite them):" : "No existing pitch. Draft a fresh one:"}
+${JSON.stringify(basePitch || {}, null, 2)}
+
+Instructions:
+- Apply the user instructions (if any): ${instructions || "(none)"}.
+- 45-60 seconds, confident and consultative.
+- Personalized opener, one probing question, tie ${product || "the product"} to their KPIs.
+- Keep it crisp and action-oriented; avoid email-like walls of text.
+- Preserve correct roles: you represent ${pitchingOrg || "your company"}, pitching ${company || "the target company"}.
+- Do not split the response into labeled sections (call goal, opener, CTA, etc.); keep everything woven into one tight script.
+
+Return JSON ONLY:
+{
+  "script": ""
+}`;
 }
 
 function deriveTelephonicPitchArray(payload, depth = 0) {
@@ -1496,6 +1781,42 @@ async function generateTelephonicPitchScripts({ personas, company, location, pro
   return { pitches: [], error: lastError, attempts };
 }
 
+async function generatePersonaEmails({ personas, company, location, product, docsText, pitchFromCompany }) {
+  const pitchingCompany = (pitchFromCompany && pitchFromCompany.trim()) || (await loadPitchingCompany());
+  const prompt = buildPersonaEmailsPrompt({
+    personas,
+    company,
+    location,
+    product,
+    docsText,
+    pitchFromCompany: pitchingCompany,
+  });
+
+  const resp = await callGeminiDirect(prompt, {
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 12000,
+    },
+    tools: [{ google_search: {} }],
+  });
+
+  if (resp.error) {
+    return { personaEmails: [], error: resp.error, rawText: resp.details || resp.text || "" };
+  }
+
+  const { parsed, rawText } = parseModelJsonResponse(resp);
+  if (!parsed) {
+    return { personaEmails: [], error: "Model did not return valid JSON.", rawText };
+  }
+
+  const personaEmails = normalizePersonaEmails(personas, parsed.persona_emails || parsed.personaEmails || []);
+  if (!personaEmails.length) {
+    return { personaEmails: [], error: "Model response missing persona_emails array.", rawText };
+  }
+
+  return { personaEmails, rawText };
+}
+
 function normalizePersonas(rawPersonas, companyName) {
   if (!Array.isArray(rawPersonas)) return [];
   return rawPersonas.map((p = {}) => ({
@@ -1577,6 +1898,118 @@ function normalizeTelephonicPitches(parsed, personas) {
     telephonicPitchError: "Model response missing telephonic_pitches array.",
     telephonicPitchAttempts: [],
   };
+}
+
+async function revisePersonaEmail({ persona, email, company, product, location, instructions, pitchingOrg }) {
+  try {
+    const prompt = buildEmailRevisionPrompt({
+      persona: persona || {},
+      company,
+      location,
+      product,
+      baseEmail: email || {},
+      instructions: instructions || "",
+      pitchingOrg,
+    });
+
+    const resp = await callGeminiDirect(prompt, {
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 12000,
+      },
+    });
+
+    if (resp.error) {
+      return { error: resp.error, details: resp.details };
+    }
+
+    const { parsed, rawText } = parseModelJsonResponse(resp);
+    if (!parsed) return { error: "Model did not return valid JSON.", rawText };
+
+    const draft = {
+      personaName: persona?.name || persona?.personaName || persona?.persona_name || "",
+      personaDesignation: persona?.designation || persona?.personaDesignation || persona?.persona_designation || "",
+      personaDepartment: persona?.department || persona?.personaDepartment || persona?.persona_department || "",
+      subject: (parsed.subject && String(parsed.subject)) || "",
+      body: (parsed.body && String(parsed.body)) || "",
+    };
+
+    return { draft, rawText };
+  } catch (err) {
+    return { error: err?.message || String(err) };
+  }
+}
+
+async function reviseAllPersonaEmails({ personas = [], emails = [], company, product, location, instructions, pitchingOrg }) {
+  const tasks = personas.map((persona, idx) =>
+    revisePersonaEmail({
+      persona,
+      email: emails[idx] || {},
+      company,
+      product,
+      location,
+      instructions,
+      pitchingOrg,
+    })
+      .then((res) => ({ ...res, personaIndex: idx }))
+      .catch((err) => ({ error: err?.message || String(err), personaIndex: idx }))
+  );
+  const results = await Promise.all(tasks);
+  return results;
+}
+
+async function revisePersonaPitch({ persona, pitch, company, product, location, instructions, pitchingOrg }) {
+  try {
+    const prompt = buildPitchRevisionPrompt({
+      persona: persona || {},
+      company,
+      location,
+      product,
+      basePitch: pitch || {},
+      instructions: instructions || "",
+      pitchingOrg,
+    });
+
+    const resp = await callGeminiDirect(prompt, {
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 12000,
+      },
+    });
+
+    if (resp.error) {
+      return { error: resp.error, details: resp.details };
+    }
+
+    const { parsed, rawText } = parseModelJsonResponse(resp);
+    if (!parsed) return { error: "Model did not return valid JSON.", rawText };
+
+    const normalized = normalizeTelephonicPitchEntry(parsed, 0, [persona || {}]);
+    return {
+      draft: normalized,
+      rawText,
+    };
+  } catch (err) {
+    return { error: err?.message || String(err) };
+  }
+}
+
+async function reviseAllPersonaPitches({ personas = [], pitches = [], company, product, location, instructions, pitchingOrg }) {
+  const tasks = personas.map((persona, idx) =>
+    revisePersonaPitch({
+      persona,
+      pitch: pitches[idx] || {},
+      company,
+      product,
+      location,
+      instructions,
+      pitchingOrg,
+    })
+      .then((res) => ({ ...res, personaIndex: idx }))
+      .catch((err) => ({ error: err?.message || String(err), personaIndex: idx }))
+  );
+  const results = await Promise.all(tasks);
+  return results;
 }
 
 function derivePrimaryEmail(parsed, personaEmails) {
@@ -1745,16 +2178,67 @@ Rules:
 
   const rawPersonas = Array.isArray(parsed.key_personas) ? parsed.key_personas : [];
   const personas = normalizePersonas(rawPersonas, parsed.company_name || company);
-  const personaEmails = normalizePersonaEmails(rawPersonas, parsed.persona_emails || parsed.personaEmails || []);
-  const telephonic = normalizeTelephonicPitches(parsed, personas);
+  const personaEmailsFromPersonaBrief = normalizePersonaEmails(
+    rawPersonas,
+    parsed.persona_emails || parsed.personaEmails || []
+  );
+  const telephonicFromPersonaBrief = normalizeTelephonicPitches(parsed, personas);
+
+  const [emailResult, telephonicResult] = await Promise.allSettled([
+    generatePersonaEmails({
+      personas,
+      company,
+      location,
+      product,
+      docsText,
+      pitchFromCompany: pitchingOrg,
+    }),
+    generateTelephonicPitchScripts({
+      personas,
+      company,
+      location,
+      product,
+      docsText,
+      pitchFromCompany: pitchingOrg,
+    }),
+  ]);
+
+  const resolvedEmailResult =
+    emailResult.status === "fulfilled"
+      ? emailResult.value
+      : { personaEmails: [], error: emailResult.reason?.message || String(emailResult.reason) };
+
+  const resolvedTelephonicResult =
+    telephonicResult.status === "fulfilled"
+      ? telephonicResult.value
+      : { pitches: [], error: telephonicResult.reason?.message || String(telephonicResult.reason), attempts: [] };
+
+  const personaEmails =
+    (resolvedEmailResult.personaEmails && resolvedEmailResult.personaEmails.length
+      ? resolvedEmailResult.personaEmails
+      : personaEmailsFromPersonaBrief) || [];
+
+  const telephonicPitches =
+    (resolvedTelephonicResult.pitches && resolvedTelephonicResult.pitches.length
+      ? resolvedTelephonicResult.pitches
+      : telephonicFromPersonaBrief.telephonicPitches) || [];
+
+  const telephonicPitchError =
+    resolvedTelephonicResult.error ||
+    (!telephonicPitches.length ? telephonicFromPersonaBrief.telephonicPitchError : "") ||
+    "";
+
+  const telephonicPitchAttempts =
+    resolvedTelephonicResult.attempts || telephonicFromPersonaBrief.telephonicPitchAttempts || [];
+
   const email = derivePrimaryEmail(parsed, personaEmails);
 
   return {
     personas,
     personaEmails,
-    telephonicPitches: telephonic.telephonicPitches,
-    telephonicPitchError: telephonic.telephonicPitchError,
-    telephonicPitchAttempts: telephonic.telephonicPitchAttempts,
+    telephonicPitches,
+    telephonicPitchError,
+    telephonicPitchAttempts,
     email,
     rawText,
   };
@@ -1904,6 +2388,8 @@ async function generateBrief({ company, location, product, docs = [], runId }) {
       ? personaResult.telephonicPitchAttempts
       : [];
     const emailObj = personaResult?.email || { subject: "", body: "" };
+    const personaEmailVersions = personaEmails.map((draft) => ({ versions: [draft], activeIndex: 0 }));
+    const telephonicPitchVersions = telephonicPitches.map((draft) => ({ versions: [draft], activeIndex: 0 }));
 
     const brief_html = buildBriefHtmlFromOverview({
       companyName: overview.company_name || company,
@@ -1925,7 +2411,11 @@ async function generateBrief({ company, location, product, docs = [], runId }) {
       top_5_news: topNews,
       personas,
       personaEmails,
+      personaEmailVersions,
       telephonicPitches,
+      telephonicPitchVersions,
+      personaEmailVersionIndexes: personaEmailVersions.map((v) => v.activeIndex || 0),
+      telephonicPitchVersionIndexes: telephonicPitchVersions.map((v) => v.activeIndex || 0),
       telephonicPitchError,
       telephonicPitchAttempts,
       email: emailObj,
@@ -1977,6 +2467,7 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
           return;
         }
         if (req.action === 'generateTargets') {
+          markWeeklyActiveUser("generateTargets").catch(() => {});
           const result = await generateTargets({
             product: req.product,
             location: req.location,
@@ -1996,6 +2487,7 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
           return;
         }
         if (req.action === 'generateBrief') {
+          markWeeklyActiveUser("generateBrief").catch(() => {});
           const payload = { company: req.company, location: req.location, product: req.product, docs: req.docs || [], runId: req.runId };
           const startTs = Date.now();
           let result = null;
@@ -2026,6 +2518,63 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
           sendResponse(result);
           return;
         }
+        if (req.action === "revisePersonaEmail") {
+          const result = await revisePersonaEmail({
+            persona: req.persona,
+            email: req.email,
+            company: req.company,
+            product: req.product,
+            location: req.location,
+            instructions: req.instructions,
+            pitchingOrg: req.pitchingOrg,
+          });
+          sendResponse(result);
+          return;
+        }
+        if (req.action === "reviseAllPersonaEmails") {
+          const result = await reviseAllPersonaEmails({
+            personas: Array.isArray(req.personas) ? req.personas : [],
+            emails: Array.isArray(req.emails) ? req.emails : [],
+            company: req.company,
+            product: req.product,
+            location: req.location,
+            instructions: req.instructions,
+            pitchingOrg: req.pitchingOrg,
+          });
+          sendResponse({ results: result });
+          return;
+        }
+        if (req.action === "revisePersonaPitch") {
+          const result = await revisePersonaPitch({
+            persona: req.persona,
+            pitch: req.pitch,
+            company: req.company,
+            product: req.product,
+            location: req.location,
+            instructions: req.instructions,
+            pitchingOrg: req.pitchingOrg,
+          });
+          sendResponse(result);
+          return;
+        }
+        if (req.action === "reviseAllPersonaPitches") {
+          const result = await reviseAllPersonaPitches({
+            personas: Array.isArray(req.personas) ? req.personas : [],
+            pitches: Array.isArray(req.pitches) ? req.pitches : [],
+            company: req.company,
+            product: req.product,
+            location: req.location,
+            instructions: req.instructions,
+            pitchingOrg: req.pitchingOrg,
+          });
+          sendResponse({ results: result });
+          return;
+        }
+        if (req.action === "updateResearchHistoryEntry") {
+          const updateResult = await updateResearchHistoryEntry(req.id, req.result || {});
+          sendResponse(updateResult);
+          return;
+        }
         if (req.action === 'getTargetHistory') {
           const data = await chrome.storage.local.get([TARGET_HISTORY_KEY]);
           const history = Array.isArray(data[TARGET_HISTORY_KEY]) ? data[TARGET_HISTORY_KEY] : [];
@@ -2033,6 +2582,7 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
           return;
         }
         if (req.action === 'exportResearch') {
+          markWeeklyActiveUser("exportResearch").catch(() => {});
           const selection = req.selection || { type: "all" };
           let format = req.format === "md" ? "md" : "xlsx";
 
@@ -2169,6 +2719,19 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
               base64: base64Data,
             },
           });
+
+          const exportMetric = buildSearchToExportConversionMetric({
+            exportId: filename,
+            occurredAtMs: Date.now(),
+            selectionType: selection.type,
+            selectionCount: filteredEntries.length,
+            format,
+            templateId: req.templateId || activeTemplate?.id || "",
+            researchEntryIds: filteredEntries.map((entry) => entry && entry.id).filter(Boolean),
+            resultRowCount: normalizedRows.length,
+          });
+          enqueueTelemetryMetric(exportMetric).catch(() => {});
+          flushTelemetryQueue().catch(() => {});
           return;
         }
         if (req.action === 'getResearchHistory') {

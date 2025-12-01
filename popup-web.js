@@ -1653,10 +1653,6 @@ function getTemplateEditorInitialDraft() {
   if (exportTemplateDraft && exportTemplateDraft.columns && exportTemplateDraft.columns.length) {
     return exportTemplateDraft;
   }
-  const active = getActiveTemplate();
-  if (active) {
-    return { name: active.name, format: active.format, columns: active.columns || [] };
-  }
   return getTemplateDraftDefaults();
 }
 
@@ -2243,6 +2239,7 @@ function renderTemplateSetupModal({ body, footer, close }, options = {}) {
   container.appendChild(formatFieldset);
 
   const templateHost = document.createElement('div');
+  templateHost.className = 'template-editor-container';
   container.appendChild(templateHost);
 
   body.appendChild(container);
@@ -2376,6 +2373,7 @@ function renderTemplateEditModal({ body, footer, close }, template, options = {}
   container.appendChild(formatFieldset);
 
   const templateHost = document.createElement('div');
+  templateHost.className = 'template-editor-container';
   container.appendChild(templateHost);
 
   body.appendChild(container);
@@ -2572,6 +2570,20 @@ function renderExportFlowModal({ body, footer, close }) {
     });
   };
 
+  const createStepPill = (num) => {
+    const step = document.createElement('span');
+    step.className = 'export-step';
+    const label = document.createElement('span');
+    label.className = 'export-step-label';
+    label.textContent = 'Step';
+    const value = document.createElement('span');
+    value.className = 'export-step-number';
+    value.textContent = num;
+    step.appendChild(label);
+    step.appendChild(value);
+    return step;
+  };
+
   const container = document.createElement('div');
   container.className = 'export-options';
   body.appendChild(container);
@@ -2580,9 +2592,7 @@ function renderExportFlowModal({ body, footer, close }) {
   templateBlock.className = 'export-section export-section-template';
   const templateHeading = document.createElement('div');
   templateHeading.className = 'export-section-heading';
-  const templateStep = document.createElement('span');
-  templateStep.className = 'export-step';
-  templateStep.textContent = 'Step 1';
+  const templateStep = createStepPill(1);
   const templateTitleGroup = document.createElement('div');
   templateTitleGroup.className = 'export-section-title-group';
   const templateTitle = document.createElement('div');
@@ -2703,9 +2713,7 @@ function renderExportFlowModal({ body, footer, close }) {
   rangeBlock.className = 'export-section export-section-range';
   const rangeHeading = document.createElement('div');
   rangeHeading.className = 'export-section-heading';
-  const rangeStep = document.createElement('span');
-  rangeStep.className = 'export-step';
-  rangeStep.textContent = 'Step 2';
+  const rangeStep = createStepPill(2);
   const rangeTitleGroup = document.createElement('div');
   rangeTitleGroup.className = 'export-section-title-group';
   const rangeTitle = document.createElement('div');
@@ -2721,6 +2729,7 @@ function renderExportFlowModal({ body, footer, close }) {
   rangeBlock.appendChild(rangeHeading);
 
   const rangeFieldset = document.createElement('fieldset');
+  rangeFieldset.classList.add('export-subsection');
   const rangeLegend = document.createElement('legend');
   rangeLegend.textContent = 'Select range';
   rangeFieldset.appendChild(rangeLegend);
@@ -2759,7 +2768,7 @@ function renderExportFlowModal({ body, footer, close }) {
   rangeBlock.appendChild(rangeFieldset);
 
   const dateContainer = document.createElement('div');
-  dateContainer.className = 'date-range-inputs';
+  dateContainer.className = 'date-range-inputs export-subsection';
 
   if (availableDateFields.length) {
     const dateFieldWrapper = document.createElement('label');
@@ -2807,7 +2816,7 @@ function renderExportFlowModal({ body, footer, close }) {
   rangeBlock.appendChild(dateContainer);
 
   const customContainer = document.createElement('div');
-  customContainer.className = 'custom-selection';
+  customContainer.className = 'custom-selection export-subsection';
 
   const searchRow = document.createElement('div');
   searchRow.className = 'search-row';
@@ -2874,7 +2883,27 @@ function renderExportFlowModal({ body, footer, close }) {
   rangeBlock.appendChild(customContainer);
   container.appendChild(rangeBlock);
 
+  const outputBlock = document.createElement('div');
+  outputBlock.className = 'export-section export-section-output';
+  const outputHeading = document.createElement('div');
+  outputHeading.className = 'export-section-heading';
+  const outputStep = createStepPill(3);
+  const outputTitleGroup = document.createElement('div');
+  outputTitleGroup.className = 'export-section-title-group';
+  const outputTitle = document.createElement('div');
+  outputTitle.className = 'export-section-title';
+  outputTitle.textContent = 'Output format';
+  const outputHint = document.createElement('p');
+  outputHint.className = 'export-section-hint';
+  outputHint.textContent = 'Choose how the export is packaged. Keep the preview on the right to spot issues quickly.';
+  outputTitleGroup.appendChild(outputTitle);
+  outputTitleGroup.appendChild(outputHint);
+  outputHeading.appendChild(outputStep);
+  outputHeading.appendChild(outputTitleGroup);
+  outputBlock.appendChild(outputHeading);
+
   const formatFieldset = document.createElement('fieldset');
+  formatFieldset.classList.add('export-subsection');
   const formatLegend = document.createElement('legend');
   formatLegend.textContent = 'Export format';
   formatFieldset.appendChild(formatLegend);
@@ -2903,31 +2932,60 @@ function renderExportFlowModal({ body, footer, close }) {
     formatRadios.appendChild(radioLabel);
   });
 
-  container.appendChild(formatFieldset);
+  outputBlock.appendChild(formatFieldset);
+  container.appendChild(outputBlock);
+
+  const sidePanel = document.createElement('div');
+  sidePanel.className = 'export-side-card';
+  const sideHeader = document.createElement('div');
+  sideHeader.className = 'export-side-card-header';
+  const sideTitle = document.createElement('div');
+  sideTitle.className = 'export-side-card-title';
+  sideTitle.textContent = 'Status & preview';
+  const sideHint = document.createElement('p');
+  sideHint.className = 'export-section-hint';
+  sideHint.textContent = 'Monitor progress, capture notes, and review the last export without leaving this modal.';
+  sideHeader.appendChild(sideTitle);
+  sideHeader.appendChild(sideHint);
+  sidePanel.appendChild(sideHeader);
 
   const statusEl = document.createElement('div');
   statusEl.className = 'export-status';
-  container.appendChild(statusEl);
+  sidePanel.appendChild(statusEl);
 
   const notesEl = document.createElement('div');
   notesEl.className = 'notes-box';
   notesEl.style.display = 'none';
-  container.appendChild(notesEl);
+  sidePanel.appendChild(notesEl);
 
   const previewWrapper = document.createElement('div');
-  container.appendChild(previewWrapper);
+  previewWrapper.className = 'export-preview';
+  sidePanel.appendChild(previewWrapper);
+  container.appendChild(sidePanel);
+
+  const footerActions = document.createElement('div');
+  footerActions.className = 'export-footer-actions';
+  const footerLeft = document.createElement('div');
+  footerLeft.className = 'export-footer-left';
+  const footerRight = document.createElement('div');
+  footerRight.className = 'export-footer-right';
+  footerActions.appendChild(footerLeft);
+  footerActions.appendChild(footerRight);
+  footer.appendChild(footerActions);
 
   const cancelBtn = document.createElement('button');
   cancelBtn.type = 'button';
+  cancelBtn.className = 'ghost';
   cancelBtn.textContent = 'Close';
   cancelBtn.addEventListener('click', () => {
     persistStateDebounced();
     close();
   });
-  footer.appendChild(cancelBtn);
+  footerLeft.appendChild(cancelBtn);
 
   const saveAndExitBtn = document.createElement('button');
   saveAndExitBtn.type = 'button';
+  saveAndExitBtn.className = 'ghost';
   saveAndExitBtn.textContent = 'Save and exit';
   saveAndExitBtn.addEventListener('click', async () => {
     if (state.inProgress) return;
@@ -2938,12 +2996,7 @@ function renderExportFlowModal({ body, footer, close }) {
     }
     close();
   });
-  footer.appendChild(saveAndExitBtn);
-
-  const exportBtn = document.createElement('button');
-  exportBtn.type = 'button';
-  exportBtn.classList.add('primary');
-  footer.appendChild(exportBtn);
+  footerLeft.appendChild(saveAndExitBtn);
 
   const downloadBtn = document.createElement('button');
   downloadBtn.type = 'button';
@@ -2954,7 +3007,12 @@ function renderExportFlowModal({ body, footer, close }) {
       triggerDownload(state.result.download);
     }
   });
-  footer.appendChild(downloadBtn);
+  footerRight.appendChild(downloadBtn);
+
+  const exportBtn = document.createElement('button');
+  exportBtn.type = 'button';
+  exportBtn.classList.add('primary');
+  footerRight.appendChild(exportBtn);
 
   function canRunExport() {
     if (!historyEntries.length) return false;
@@ -3860,6 +3918,20 @@ function applyRevisionPreview(preview, type) {
 
   activeBriefData.personaEmailVersions = personaEmailVersions;
   activeBriefData.telephonicPitchVersions = telephonicPitchVersions;
+  activeBriefData.personaEmailVersionIndexes = personaEmailVersions.map((v) => {
+    const idx = clampIndex(
+      typeof v?.activeIndex === 'number' ? v.activeIndex : 0,
+      Array.isArray(v?.versions) ? v.versions : []
+    );
+    return idx < 0 ? 0 : idx;
+  });
+  activeBriefData.telephonicPitchVersionIndexes = telephonicPitchVersions.map((v) => {
+    const idx = clampIndex(
+      typeof v?.activeIndex === 'number' ? v.activeIndex : 0,
+      Array.isArray(v?.versions) ? v.versions : []
+    );
+    return idx < 0 ? 0 : idx;
+  });
   if (type === 'pitch') {
     activeBriefData.telephonicPitchError = '';
     telephonicPitchErrorMessage = '';

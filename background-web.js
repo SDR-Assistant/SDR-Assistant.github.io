@@ -8,7 +8,7 @@ const RESEARCH_HISTORY_KEY = "researchHistory";
 const TARGET_COMPANY_GOAL = 100;
 const TELEMETRY_QUEUE_KEY = "telemetryQueue";
 const TELEMETRY_ENDPOINT_KEY = "telemetryEndpoint";
-const TELEMETRY_DEFAULT_ENDPOINT = "http://bunserv.duckdns.org:8000/logs";
+const TELEMETRY_DEFAULT_ENDPOINT = "https://bunserv.duckdns.org:8000/logs";
 const TELEMETRY_FLUSH_ALARM = "telemetryFlushAlarm";
 const TELEMETRY_FLUSH_INTERVAL_MINUTES = 5;
 const TELEMETRY_BATCH_SIZE = 10;
@@ -59,7 +59,7 @@ async function callGeminiDirect(promptText, opts = {}) {
 
   // Merge caller config with safer, deterministic defaults and clamps
   const userCfg = opts.generationConfig || {};
-  const generationConfig = {
+  let generationConfig = {
     ...userCfg,
     // Keep temperature low for determinism; clamp to [0, 0.2]
     temperature: Math.max(0, Math.min(userCfg.temperature ?? 0.1, 0.2)),
@@ -69,16 +69,24 @@ async function callGeminiDirect(promptText, opts = {}) {
     candidateCount: 1,
   };
     
-  const isStructured = generationConfig.responseMimeType === "application/json";
   const customContents = Array.isArray(opts.contents) && opts.contents.length ? opts.contents : null;
   const requestedTools = Array.isArray(opts.tools) && opts.tools.length ? opts.tools.filter(Boolean) : null;
+  const hasTools = !!(requestedTools && requestedTools.length);
+
+  // Tools + responseMimeType=json is unsupported; drop the mime hint if tools are requested.
+  if (hasTools && generationConfig.responseMimeType === "application/json") {
+    generationConfig = { ...generationConfig };
+    delete generationConfig.responseMimeType;
+  }
+
+  const isStructured = generationConfig.responseMimeType === "application/json";
 
   const body = {
     contents: customContents || [{ role: "user", parts: [{ text: promptText || "" }] }],
     generationConfig: generationConfig,
   };
 
-  if (requestedTools && requestedTools.length) {
+  if (hasTools) {
     body.tools = requestedTools;
   } else if (!isStructured) {
     body.tools = [{ google_search: {} }];
@@ -112,12 +120,39 @@ async function callGeminiDirect(promptText, opts = {}) {
       return { error: `Gemini API error: ${errorDetails}`, details: respJson };
     }
 
-    let outputText = "";
-    if (respJson?.candidates?.[0]?.content?.parts?.[0]?.text) {
-      outputText = respJson.candidates[0].content.parts[0].text;
-    } else {
-      if (respJson?.candidates?.[0]?.finishReason) {
-         return { error: `Gemini generation stopped: ${respJson.candidates[0].finishReason}`, details: respJson };
+    const candidate = respJson?.candidates?.[0];
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+    const textParts = [];
+    const structuredParts = [];
+    parts.forEach((part) => {
+      if (typeof part?.text === "string" && part.text.trim()) {
+        textParts.push(part.text);
+      } else if (part?.functionCall?.args) {
+        try {
+          structuredParts.push(JSON.stringify(part.functionCall.args));
+        } catch (err) {
+          // Ignore parse issues
+        }
+      } else if (part?.functionResponse?.response) {
+        try {
+          structuredParts.push(JSON.stringify(part.functionResponse.response));
+        } catch (err) {
+          // Ignore parse issues
+        }
+      } else if (part?.inlineData?.mimeType === "application/json" && part?.inlineData?.data) {
+        const decoded = decodeBase64Text(part.inlineData.data);
+        if (decoded) structuredParts.push(decoded);
+      }
+    });
+
+    let outputText = textParts.join("\n").trim();
+    if (!outputText && structuredParts.length) {
+      outputText = structuredParts.join("\n");
+    }
+
+    if (!outputText) {
+      if (candidate?.finishReason) {
+        return { error: `Gemini generation stopped: ${candidate.finishReason}`, details: respJson };
       }
       return { error: "Could not find text in Gemini response.", details: respJson };
     }
@@ -166,7 +201,28 @@ function parseModelJsonResponse(resp) {
 
   if (!parsed && resp?.raw?.candidates?.[0]?.content?.parts?.length) {
     const combined = resp.raw.candidates[0].content.parts
-      .map((part) => part?.text || "")
+      .map((part) => {
+        if (typeof part?.text === "string" && part.text.trim()) return part.text;
+        if (part?.functionCall?.args) {
+          try {
+            return JSON.stringify(part.functionCall.args);
+          } catch (err) {
+            return null;
+          }
+        }
+        if (part?.functionResponse?.response) {
+          try {
+            return JSON.stringify(part.functionResponse.response);
+          } catch (err) {
+            return null;
+          }
+        }
+        if (part?.inlineData?.mimeType === "application/json" && part?.inlineData?.data) {
+          const decoded = decodeBase64Text(part.inlineData.data);
+          return decoded || null;
+        }
+        return null;
+      })
       .filter(Boolean)
       .join("\n");
     if (combined) {
@@ -1537,7 +1593,7 @@ Return JSON ONLY:
 }
 
 function deriveTelephonicPitchArray(payload, depth = 0) {
-  if (!payload || depth > 2) return [];
+  if (!payload || depth > 4) return [];
   if (Array.isArray(payload)) return payload;
   if (typeof payload !== "object") return [];
 
@@ -1553,9 +1609,18 @@ function deriveTelephonicPitchArray(payload, depth = 0) {
 
   for (const key of candidateKeys) {
     const candidate = payload[key];
-    if (Array.isArray(candidate) && candidate.length) {
-      return candidate;
+    if (Array.isArray(candidate) && candidate.length) return candidate;
+    if (candidate && typeof candidate === "object") {
+      return [candidate];
     }
+    if (typeof candidate === "string" && candidate.trim()) {
+      return [{ full_pitch: candidate.trim() }];
+    }
+  }
+
+  // Fallback: if object looks like a single pitch
+  if (payload.full_pitch || payload.fullPitch || payload.script || payload.call_script || payload.pitch) {
+    return [payload];
   }
 
   if (payload.result && typeof payload.result === "object") {
@@ -1566,6 +1631,13 @@ function deriveTelephonicPitchArray(payload, depth = 0) {
   if (payload.data && typeof payload.data === "object") {
     const nested = deriveTelephonicPitchArray(payload.data, depth + 1);
     if (nested.length) return nested;
+  }
+
+  for (const value of Object.values(payload)) {
+    if (typeof value === "object" && value !== null) {
+      const nested = deriveTelephonicPitchArray(value, depth + 1);
+      if (nested.length) return nested;
+    }
   }
 
   return [];
@@ -1666,7 +1738,28 @@ function extractTelephonicPitchResponse(resp, personas) {
 
   if (!teleParsed && resp.raw?.candidates?.[0]?.content?.parts?.length) {
     const combined = resp.raw.candidates[0].content.parts
-      .map((part) => part?.text || "")
+      .map((part) => {
+        if (typeof part?.text === "string" && part.text.trim()) return part.text;
+        if (part?.functionCall?.args) {
+          try {
+            return JSON.stringify(part.functionCall.args);
+          } catch (err) {
+            return null;
+          }
+        }
+        if (part?.functionResponse?.response) {
+          try {
+            return JSON.stringify(part.functionResponse.response);
+          } catch (err) {
+            return null;
+          }
+        }
+        if (part?.inlineData?.mimeType === "application/json" && part?.inlineData?.data) {
+          const decoded = decodeBase64Text(part.inlineData.data);
+          return decoded || null;
+        }
+        return null;
+      })
       .filter(Boolean)
       .join("\n");
     if (combined) {
@@ -1721,15 +1814,12 @@ async function generateTelephonicPitchScripts({ personas, company, location, pro
   });
   const attempts = [];
 
-  const runAttempt = async (label, structuredOutput) => {
+  const runAttempt = async (label) => {
     try {
       const generationConfig = {
         temperature: 0.2,
         maxOutputTokens: 4096,
       };
-      if (structuredOutput) {
-        generationConfig.responseMimeType = "application/json";
-      }
       const teleResp = await callGeminiDirect(prompt, {
         generationConfig,
         tools: [{ google_search: {} }],
@@ -1763,12 +1853,12 @@ async function generateTelephonicPitchScripts({ personas, company, location, pro
     }
   };
 
-  const structuredResult = await runAttempt("json-output", true);
+  const structuredResult = await runAttempt("json-output");
   if (structuredResult && structuredResult.length) {
     return { pitches: structuredResult, attempts };
   }
 
-  const fallbackResult = await runAttempt("text-output", false);
+  const fallbackResult = await runAttempt("text-output");
   if (fallbackResult && fallbackResult.length) {
     return { pitches: fallbackResult, attempts };
   }
@@ -2092,7 +2182,7 @@ Do not include markdown fences.`;
   return { overview, rawText };
 }
 
-async function generatePersonaBrief({ company, location, product, docsText }) {
+async function generatePersonaBrief({ company, location, product, docsText, runId }) {
   const pitchFromCompany = await loadPitchingCompany();
   const pitchingOrg = pitchFromCompany || "your company";
   const prospectLabel = company || "the target company";
@@ -2183,25 +2273,84 @@ Rules:
     parsed.persona_emails || parsed.personaEmails || []
   );
   const telephonicFromPersonaBrief = normalizeTelephonicPitches(parsed, personas);
+  const initialEmail = derivePrimaryEmail(parsed, personaEmailsFromPersonaBrief);
 
-  const [emailResult, telephonicResult] = await Promise.allSettled([
-    generatePersonaEmails({
+  if (runId) {
+    emitBriefPartialUpdate(runId, {
       personas,
-      company,
-      location,
-      product,
-      docsText,
-      pitchFromCompany: pitchingOrg,
-    }),
-    generateTelephonicPitchScripts({
-      personas,
-      company,
-      location,
-      product,
-      docsText,
-      pitchFromCompany: pitchingOrg,
-    }),
-  ]);
+      personaEmails: personaEmailsFromPersonaBrief,
+      telephonicPitches: telephonicFromPersonaBrief.telephonicPitches,
+      telephonicPitchError: telephonicFromPersonaBrief.telephonicPitches.length
+        ? telephonicFromPersonaBrief.telephonicPitchError
+        : "",
+      telephonicPitchAttempts: telephonicFromPersonaBrief.telephonicPitchAttempts,
+      email: initialEmail,
+    });
+  }
+
+  const emailPromise = generatePersonaEmails({
+    personas,
+    company,
+    location,
+    product,
+    docsText,
+    pitchFromCompany: pitchingOrg,
+  });
+  const telephonicPromise = generateTelephonicPitchScripts({
+    personas,
+    company,
+    location,
+    product,
+    docsText,
+    pitchFromCompany: pitchingOrg,
+  });
+
+  if (runId) {
+    emailPromise
+      .then((res) => {
+        const personaEmails =
+          (res?.personaEmails && res.personaEmails.length ? res.personaEmails : personaEmailsFromPersonaBrief) || [];
+        const email = derivePrimaryEmail(parsed, personaEmails);
+        emitBriefPartialUpdate(runId, {
+          personaEmails,
+          email,
+        });
+      })
+      .catch(() => {
+        emitBriefPartialUpdate(runId, {
+          personaEmails: personaEmailsFromPersonaBrief,
+          email: initialEmail,
+        });
+      });
+
+    telephonicPromise
+      .then((res) => {
+        const telephonicPitches =
+          (res?.pitches && res.pitches.length ? res.pitches : telephonicFromPersonaBrief.telephonicPitches) || [];
+        const telephonicPitchError =
+          res?.error ||
+          (!telephonicPitches.length ? telephonicFromPersonaBrief.telephonicPitchError : "") ||
+          "";
+        const telephonicPitchAttempts = res?.attempts || telephonicFromPersonaBrief.telephonicPitchAttempts || [];
+        emitBriefPartialUpdate(runId, {
+          telephonicPitches,
+          telephonicPitchError,
+          telephonicPitchAttempts,
+        });
+      })
+      .catch((err) => {
+        const telephonicPitches = telephonicFromPersonaBrief.telephonicPitches || [];
+        const fallbackError = telephonicFromPersonaBrief.telephonicPitchError || "";
+        const errorMsg = err?.message || (err ? String(err) : "") || fallbackError;
+        emitBriefPartialUpdate(runId, {
+          telephonicPitches,
+          telephonicPitchError: errorMsg || (!telephonicPitches.length ? fallbackError : ""),
+          telephonicPitchAttempts: telephonicFromPersonaBrief.telephonicPitchAttempts || [],
+        });
+      });
+  }
+
+  const [emailResult, telephonicResult] = await Promise.allSettled([emailPromise, telephonicPromise]);
 
   const resolvedEmailResult =
     emailResult.status === "fulfilled"
@@ -2322,6 +2471,7 @@ async function generateBrief({ company, location, product, docs = [], runId }) {
       location,
       product,
       docsText,
+      runId,
     })
       .then((res) => {
         stepDone(res.error ? "Persona generation failed" : "Persona outreach generated");

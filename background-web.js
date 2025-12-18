@@ -124,12 +124,15 @@ async function loadLlmSettings() {
 
 async function callGeminiDirect(promptText, opts = {}, providerSettings = {}) {
   // Gemini is routed through Groq for consistency with the project-wide Groq usage.
-  const groqModel =
+  const candidateModel =
     coerceModelForProvider(
       LLMProvider.GROQ,
       (opts && opts.model && typeof opts.model === "string" ? opts.model : null) ||
         DEFAULT_LLM_MODELS[LLMProvider.GROQ]
     ) || DEFAULT_LLM_MODELS[LLMProvider.GROQ];
+  const groqModel = candidateModel && candidateModel.toLowerCase().startsWith("openai/")
+    ? candidateModel
+    : "openai/gpt-oss-120b";
 
   const shimmedOpts = {
     ...opts,
@@ -1928,6 +1931,44 @@ async function updateResearchHistoryEntry(id, resultUpdates = {}) {
   }
 }
 
+async function renameHistoryEntry(storageKey, id, title) {
+  try {
+    const data = await chrome.storage.local.get([storageKey]);
+    const history = Array.isArray(data[storageKey]) ? data[storageKey] : [];
+    const idx = history.findIndex((entry) => entry && entry.id === id);
+    if (idx === -1) return { ok: false, error: "Entry not found" };
+    const normalizedTitle = typeof title === "string" ? title.trim() : "";
+    const updated = { ...(history[idx] || {}) };
+    if (normalizedTitle) {
+      updated.customTitle = normalizedTitle;
+    } else {
+      delete updated.customTitle;
+    }
+    history[idx] = updated;
+    await chrome.storage.local.set({ [storageKey]: history });
+    return { ok: true, entry: updated };
+  } catch (err) {
+    console.warn("Failed to rename history entry", err);
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
+async function deleteHistoryEntry(storageKey, id) {
+  try {
+    const data = await chrome.storage.local.get([storageKey]);
+    const history = Array.isArray(data[storageKey]) ? data[storageKey] : [];
+    const nextHistory = history.filter((entry) => entry && entry.id !== id);
+    if (nextHistory.length === history.length) {
+      return { ok: false, error: "Entry not found" };
+    }
+    await chrome.storage.local.set({ [storageKey]: nextHistory });
+    return { ok: true, deletedId: id };
+  } catch (err) {
+    console.warn("Failed to delete history entry", err);
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
 async function saveTargetHistoryEntry(request, result) {
   try {
     const docRefs = Array.isArray(request.docs)
@@ -1964,73 +2005,6 @@ async function saveTargetHistoryEntry(request, result) {
   } catch (err) {
     console.warn("Failed to persist target history", err);
     return null;
-  }
-}
-
-async function fetchHeadquartersLocation({ companyName, locationHint }) {
-  if (!companyName) {
-    return { location: "", metadata: null, rawText: "", error: "Missing company name" };
-  }
-
-  const normalizedLocationHint = locationHint ? String(locationHint).trim() : "";
-  const focusInstruction = normalizedLocationHint
-    ? `Return the primary headquarters (registered office) the company maintains in ${normalizedLocationHint}. Do not fall back to a different country's global HQ; if no headquarters exists in ${normalizedLocationHint}, return an empty hq_location.`
-    : `Return the official global headquarters registered for the company.`;
-
-  const prompt = `You are verifying the official headquarters for ${companyName}.
-${focusInstruction}
-Location hint to respect: ${normalizedLocationHint || "None provided (use global HQ)"}
-
-Requirements:
-- If a location hint is provided, interpret "headquarters" as the main registered office for that country/region (e.g., India HQ when the hint is India). Only return an address inside that geography.
-- Use browser search to gather the latest authoritative mentions of the headquarters address, favoring queries that include the location hint.
-- If mapping details are needed, infer them from the search results (no dedicated maps tool available).
-- If there are conflicting sources, explain why the selected HQ is most accurate.
-
-Return markdown only. Respond with a single line in this exact format (no extra text, no code fences):
-HQ Location: City, State/Region, Country`;
-
-  try {
-    const resp = await callLlmWithRetry(prompt, {
-      model: GROQ_COMPOUND_MINI_MODEL,
-      secondaryModel: GROQ_COMPOUND_MINI_MODEL,
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 200,
-        
-      },
-      compoundCustom: {
-        tools: {
-          enabled_tools: ["web_search"],
-        },
-      },
-    });
-
-    if (resp.error) {
-      console.warn("Failed to fetch headquarters location", resp.error, resp.details || resp);
-      return { location: "", metadata: null, rawText: "", error: resp.error };
-    }
-
-    const rawText = typeof resp.text === "string" ? resp.text : "";
-    const location = parseHqLocationMarkdown(rawText);
-
-    if (!location) {
-      return {
-        location: "",
-        metadata: null,
-        rawText,
-        error: "Headquarters lookup did not include a location.",
-      };
-    }
-
-    return {
-      location,
-      metadata: null,
-      rawText,
-    };
-  } catch (err) {
-    console.warn("Failed to fetch headquarters location", err);
-    return { location: "", metadata: null, rawText: "", error: err?.message || String(err) };
   }
 }
 
@@ -2821,19 +2795,53 @@ function normalizeTopNewsEntries(topNews = []) {
     .filter((entry) => entry.title || entry.summary);
 }
 
-async function fetchRevenueAndSectorOverview({ company, location, product, docsText }) {
-  const prompt = `You are a helpful assistant. Research the target company and return concise commercial context.
+function parseHqRevenueSectorMarkdown(markdown = "", companyName = "") {
+  const lines = splitMarkdownLines(markdown);
+  const result = {
+    company_name: companyName || "",
+    hq_location: "",
+    revenue_estimate: "",
+    industry_sector: "",
+  };
+
+  lines.forEach((line) => {
+    const hqMatch = line.match(/^hq location\s*:\s*(.+)$/i);
+    if (hqMatch) {
+      result.hq_location = hqMatch[1].trim();
+      return;
+    }
+    const revMatch = line.match(/^revenue\s*:\s*(.+)$/i);
+    if (revMatch) {
+      result.revenue_estimate = revMatch[1].trim();
+      return;
+    }
+    const secMatch = line.match(/^sector\s*:\s*(.+)$/i);
+    if (secMatch) {
+      result.industry_sector = secMatch[1].trim();
+    }
+  });
+
+  return result;
+}
+
+async function fetchHqRevenueAndSector({ company, locationHint, product, docsText }) {
+  if (!company) {
+    return { error: "Missing company name", overview: { company_name: "", hq_location: "", revenue_estimate: "", industry_sector: "" }, rawText: "" };
+  }
+
+  const normalizedLocationHint = locationHint ? String(locationHint).trim() : "";
+  const prompt = `You are a helpful assistant. Using live web search, return the official HQ location, realistic revenue, and primary industry sector for the company.
 Company: ${company}
-Location: ${location || "N/A"}
-Product: ${product}
+Location hint: ${normalizedLocationHint || "None provided (use global HQ)"}
+Product: ${product || "N/A"}
 
 Context docs (first 4000 chars each):
 ${docsText || "(no docs provided)"}
 
 Return markdown only with exactly three lines (no headings, no code fences):
-Company: <company name>
-Revenue: <realistic revenue string or "Unknown">
-Sector: <industry sector>`;
+HQ Location: City, State/Region, Country
+Revenue: realistic revenue string or "Unknown"
+Sector: primary industry sector`;
 
   try {
     const resp = await callLlmWithRetry(prompt, {
@@ -2841,7 +2849,7 @@ Sector: <industry sector>`;
       secondaryModel: GROQ_COMPOUND_MINI_MODEL,
       generationConfig: {
         temperature: 0.2,
-        maxOutputTokens: 200,
+        maxOutputTokens: 400,
       },
       compoundCustom: {
         tools: {
@@ -2851,24 +2859,17 @@ Sector: <industry sector>`;
     });
 
     if (resp.error) {
-      return { error: resp.error + (resp.details ? " Details: " + JSON.stringify(resp.details) : ""), attempts: resp.details || [] };
+      return { error: resp.error + (resp.details ? " Details: " + JSON.stringify(resp.details) : ""), rawText: "", overview: { company_name: company, hq_location: "", revenue_estimate: "", industry_sector: "" } };
     }
 
     const rawText = typeof resp.text === "string" ? resp.text : "";
-    const parsed = parseRevenueSectorMarkdown(rawText, company);
-    if (!parsed || typeof parsed !== "object") {
-      return { error: "Model did not return valid markdown.", rawText };
-    }
+    const parsed = parseHqRevenueSectorMarkdown(rawText, company);
+    const missingAll = !parsed.hq_location && !parsed.revenue_estimate && !parsed.industry_sector;
+    const error = missingAll ? "Model did not return HQ, revenue, or sector." : "";
 
-    const overview = {
-      company_name: parsed.company_name || company || "",
-      revenue_estimate: parsed.revenue_estimate || parsed.revenue || "",
-      industry_sector: parsed.industry_sector || parsed.industrySector || parsed.industry || "",
-    };
-
-    return { overview, rawText };
+    return { overview: parsed, rawText, error };
   } catch (err) {
-    return { error: err?.message || String(err) };
+    return { error: err?.message || String(err), rawText: "", overview: { company_name: company, hq_location: "", revenue_estimate: "", industry_sector: "" } };
   }
 }
 
@@ -2917,32 +2918,34 @@ Return markdown only. Provide up to 5 bullet items in this format (no code fence
 }
 
 async function generateBriefOverview({ company, location, product, docsText }) {
-  const [financialResult, newsResult] = await Promise.all([
-    fetchRevenueAndSectorOverview({ company, location, product, docsText }),
+  const [coreResult, newsResult] = await Promise.all([
+    fetchHqRevenueAndSector({ company, locationHint: location, product, docsText }),
     fetchRecentNewsEntries({ company, location, docsText }),
   ]);
 
   const overview = {
-    company_name: financialResult?.overview?.company_name || company || "",
-    revenue_estimate: financialResult?.overview?.revenue_estimate || "",
-    industry_sector: financialResult?.overview?.industry_sector || "",
+    company_name: coreResult?.overview?.company_name || company || "",
+    hq_location: coreResult?.overview?.hq_location || "",
+    revenue_estimate: coreResult?.overview?.revenue_estimate || "",
+    industry_sector: coreResult?.overview?.industry_sector || "",
     top_5_news: Array.isArray(newsResult?.topNews) ? newsResult.topNews : [],
   };
 
   const rawSegments = [];
-  if (financialResult?.rawText) rawSegments.push(financialResult.rawText);
+  if (coreResult?.rawText) rawSegments.push(coreResult.rawText);
   if (newsResult?.rawText) rawSegments.push(newsResult.rawText);
   const rawText = rawSegments.join("\n\n---\n\n");
 
   const errors = [];
-  if (financialResult?.error) errors.push(`overview: ${financialResult.error}`);
+  if (coreResult?.error) errors.push(`overview: ${coreResult.error}`);
   if (newsResult?.error) errors.push(`news: ${newsResult.error}`);
 
+  const response = { overview, rawText };
   if (errors.length) {
-    return { overview, rawText, error: errors.join(" | ") };
+    response.error = errors.join(" | ");
+    response.hq_error = coreResult?.error || "";
   }
-
-  return { overview, rawText };
+  return response;
 }
 
 async function generatePersonaBrief({ company, location, product, docsText, runId }) {
@@ -3059,9 +3062,49 @@ Return markdown only. Provide one bullet per persona using this format (no headi
   };
 }
 
+async function fetchProductContext({ product }) {
+  const trimmedProduct = typeof product === "string" ? product.trim() : "";
+  if (!trimmedProduct) return { context: "", rawText: "", error: "Product name is missing." };
+
+  const prompt = `You are a helpful assistant. Use browser search to quickly understand this product and summarize its top use cases.
+Product: ${trimmedProduct}
+
+Requirements:
+- Rely on live web search to ground the summary; prefer recent, credible sources.
+- Capture what the product does, who uses it, and 3-5 core use cases or problems it solves.
+- Keep it concise and factual.
+
+Return markdown only as a short paragraph or up to 5 bullets (no headings, no code fences).`;
+
+  try {
+    const resp = await callLlmWithRetry(prompt, {
+      model: GROQ_COMPOUND_MINI_MODEL,
+      secondaryModel: GROQ_COMPOUND_MINI_MODEL,
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 600,
+      },
+      compoundCustom: {
+        tools: {
+          enabled_tools: ["web_search"],
+        },
+      },
+    });
+
+    if (resp.error) {
+      return { context: "", rawText: "", error: resp.error };
+    }
+
+    const rawText = typeof resp.text === "string" ? resp.text.trim() : "";
+    return { context: rawText, rawText, error: "" };
+  } catch (err) {
+    return { context: "", rawText: "", error: err?.message || String(err) };
+  }
+}
+
 async function generateBrief({ company, location, product, docs = [], runId }) {
   try {
-    let totalSteps = 3;
+    let totalSteps = 2;
     let completedSteps = 0;
     emitBriefProgress({
       runId,
@@ -3070,10 +3113,17 @@ async function generateBrief({ company, location, product, docs = [], runId }) {
       label: "Starting brief request",
     });
 
-    const docsText = (docs || []).map(d => {
+    let docsText = (docs || []).map(d => {
       const txt = decodeBase64Text(d.content_b64 || d.content || "");
       return `--- ${d.name || "doc"} ---\n${txt.substring(0, 4000)}`;
     }).join("\n\n");
+
+    if (!docsText.trim() && product) {
+      const productContextResult = await fetchProductContext({ product });
+      if (productContextResult.context) {
+        docsText = `--- Product context (web search) ---\n${productContextResult.context}`;
+      }
+    }
 
     const stepDone = (label) => {
       completedSteps = Math.min(totalSteps, completedSteps + 1);
@@ -3085,31 +3135,6 @@ async function generateBrief({ company, location, product, docs = [], runId }) {
       });
     };
 
-    const hqPromise = fetchHeadquartersLocation({
-      companyName: company,
-      locationHint: location || "",
-    })
-      .then((res) => {
-        stepDone("Headquarters located");
-        emitBriefPartialUpdate(runId, {
-          hq_location: res.location || "",
-          hq_lookup_error: res.error || "",
-          hq_lookup_details: res.metadata || null,
-        });
-        return res;
-      })
-      .catch((hqErr) => {
-        console.warn("Headquarters lookup failed", hqErr);
-        stepDone("Headquarters lookup failed");
-        const fallback = { location: "", metadata: null, rawText: "", error: hqErr?.message || String(hqErr) };
-        emitBriefPartialUpdate(runId, {
-          hq_location: "",
-          hq_lookup_error: fallback.error,
-          hq_lookup_details: null,
-        });
-        return fallback;
-      });
-
     const overviewPromise = generateBriefOverview({
       company,
       location,
@@ -3118,17 +3143,21 @@ async function generateBrief({ company, location, product, docs = [], runId }) {
     })
       .then((res) => {
         stepDone(res.error ? "Overview generation failed" : "Overview generated");
+        const overview = res.overview || {};
+        emitBriefPartialUpdate(runId, {
+          overview,
+          hq_location: overview.hq_location || "",
+          hq_lookup_error: res.hq_error || res.error || "",
+        });
         if (res.error) {
           emitBriefPartialUpdate(runId, { overview_error: res.error });
-        } else if (res.overview) {
-          emitBriefPartialUpdate(runId, { overview: res.overview });
         }
         return res;
       })
       .catch((err) => {
         const errorMsg = err?.message || String(err);
         stepDone("Overview generation failed");
-        emitBriefPartialUpdate(runId, { overview_error: errorMsg });
+        emitBriefPartialUpdate(runId, { overview_error: errorMsg, hq_lookup_error: errorMsg });
         return { error: errorMsg };
       });
 
@@ -3170,11 +3199,7 @@ async function generateBrief({ company, location, product, docs = [], runId }) {
         };
       });
 
-    const [hqLookupResult, overviewResult, personaResult] = await Promise.all([
-      hqPromise,
-      overviewPromise,
-      personaPromise,
-    ]);
+    const [overviewResult, personaResult] = await Promise.all([overviewPromise, personaPromise]);
 
     completedSteps = Math.max(completedSteps, totalSteps);
     emitBriefProgress({
@@ -3189,8 +3214,8 @@ async function generateBrief({ company, location, product, docs = [], runId }) {
     const industrySector = overview.industry_sector || overview.industrySector || overview.industry || "";
     const revenueEstimate = overview.revenue_estimate || "";
 
-    const resolvedHqLocation = hqLookupResult?.location || overview.hq_location || "";
-    const hqErrorMessage = hqLookupResult?.error ? `HQ lookup failed: ${hqLookupResult.error}` : "";
+    const resolvedHqLocation = overview.hq_location || "";
+    const hqErrorMessage = overviewResult?.hq_error ? `HQ lookup failed: ${overviewResult.hq_error}` : "";
     const displayedHq = resolvedHqLocation || hqErrorMessage || "Not found";
     const displayedIndustry = industrySector || "Not found";
 
@@ -3236,9 +3261,9 @@ async function generateBrief({ company, location, product, docs = [], runId }) {
       telephonicPitchAttempts,
       email: emailObj,
       hq_location: resolvedHqLocation,
-      hq_lookup_details: hqLookupResult?.metadata || null,
-      hq_lookup_error: hqLookupResult?.error || "",
-      hq_lookup_raw: hqLookupResult?.rawText || "",
+      hq_lookup_details: null,
+      hq_lookup_error: overviewResult?.hq_error || "",
+      hq_lookup_raw: overviewResult?.rawText || "",
       raw_overview: overviewResult?.rawText || "",
       raw_personas: personaResult?.rawText || "",
       overview_error: overviewError,
@@ -3412,6 +3437,18 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
         if (req.action === "updateResearchHistoryEntry") {
           const updateResult = await updateResearchHistoryEntry(req.id, req.result || {});
           sendResponse(updateResult);
+          return;
+        }
+        if (req.action === "renameHistoryEntry") {
+          const storageKey = req.historyType === "target" ? TARGET_HISTORY_KEY : RESEARCH_HISTORY_KEY;
+          const renameResult = await renameHistoryEntry(storageKey, req.id, req.title || "");
+          sendResponse(renameResult);
+          return;
+        }
+        if (req.action === "deleteHistoryEntry") {
+          const storageKey = req.historyType === "target" ? TARGET_HISTORY_KEY : RESEARCH_HISTORY_KEY;
+          const deleteResult = await deleteHistoryEntry(storageKey, req.id);
+          sendResponse(deleteResult);
           return;
         }
         if (req.action === 'getTargetHistory') {

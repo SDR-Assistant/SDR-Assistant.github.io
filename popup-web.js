@@ -5454,7 +5454,7 @@ historyList?.addEventListener('keydown', (evt) => {
 });
 
 railHistoryBtn?.addEventListener('click', () => {
-  setHistorySidebarCollapsed(false);
+  openHistorySearchModal(activeMode || Mode.TARGETED_BRIEF);
 });
 
 railNewResearchBtn?.addEventListener('click', () => {

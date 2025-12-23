@@ -1021,6 +1021,54 @@ function applyTelePitchEdit(personaIdx, content) {
   persistRevisionToHistory();
 }
 
+async function revisePersonaOutputs(personaIdx) {
+  if (!activeBriefData || personaIdx < 0) return;
+  const personas = Array.isArray(activeBriefData.personas) ? activeBriefData.personas : [];
+  const persona = personas[personaIdx] || {};
+  const company = (companyEl?.value || activeBriefData?.company_name || '').trim();
+  const product = (productEl?.value || '').trim();
+  const location = (locationEl?.value || '').trim();
+  const pitchingOrg = ((cachedPitchingCompany || await pitchingCompanyLoadPromise) || '').trim();
+  const payloadBase = { company, product, location, pitchingOrg };
+
+  const emailEntry = personaEmailVersions?.[personaIdx];
+  const emailDraft = emailEntry?.versions?.[emailEntry.activeIndex] || activeBriefData?.personaEmails?.[personaIdx] || {};
+  const pitchEntry = telephonicPitchVersions?.[personaIdx];
+  const pitchDraft = pitchEntry?.versions?.[pitchEntry.activeIndex] || activeBriefData?.telephonicPitches?.[personaIdx] || {};
+
+  const errors = [];
+
+  try {
+    const emailResp = await sendMessagePromise({
+      action: 'revisePersonaEmail',
+      persona,
+      email: emailDraft,
+      ...payloadBase,
+    });
+    if (emailResp?.error || !emailResp?.draft) throw new Error(emailResp?.error || 'Email revision failed');
+    applyRevisionPreview({ drafts: [{ personaIndex: personaIdx, draft: emailResp.draft }] }, 'email');
+  } catch (err) {
+    errors.push(err?.message || String(err));
+  }
+
+  try {
+    const pitchResp = await sendMessagePromise({
+      action: 'revisePersonaPitch',
+      persona,
+      pitch: pitchDraft,
+      ...payloadBase,
+    });
+    if (pitchResp?.error || !pitchResp?.draft) throw new Error(pitchResp?.error || 'Pitch revision failed');
+    applyRevisionPreview({ drafts: [{ personaIndex: personaIdx, draft: pitchResp.draft }] }, 'pitch');
+  } catch (err) {
+    errors.push(err?.message || String(err));
+  }
+
+  if (errors.length) {
+    throw new Error(errors.join(' | '));
+  }
+}
+
 function normalizeTargetSector(value) {
   if (typeof value !== 'string') return '';
   return value.replace(/\s+/g, ' ').trim();
@@ -4932,11 +4980,29 @@ function openPersonaEditor(idx) {
         inputs[field.key] = input;
       });
 
+      const statusEl = document.createElement('div');
+      statusEl.className = 'modal-helper';
+      statusEl.style.minHeight = '20px';
+      body.appendChild(statusEl);
+
       const save = document.createElement('button');
       save.type = 'button';
       save.className = 'primary';
       save.textContent = 'Save';
-      save.addEventListener('click', () => {
+      const saveAndUpdate = document.createElement('button');
+      saveAndUpdate.type = 'button';
+      saveAndUpdate.className = 'primary';
+      saveAndUpdate.textContent = 'Save and update pitches';
+      saveAndUpdate.style.marginLeft = '8px';
+
+      const setLoading = (loading, message = '') => {
+        save.disabled = loading;
+        saveAndUpdate.disabled = loading;
+        statusEl.textContent = message;
+        statusEl.style.color = loading ? '' : '#b91c1c';
+      };
+
+      const handleSave = async (triggerRevisions) => {
         const nextPersona = { ...persona };
         nextPersona.name = inputs.name.value.trim();
         nextPersona.designation = inputs.designation.value.trim();
@@ -4947,8 +5013,24 @@ function openPersonaEditor(idx) {
         activeBriefData.personas = personas;
         renderPersonaSectionsFromState();
         persistRevisionToHistory();
-        close();
-      });
+
+        if (!triggerRevisions) {
+          close();
+          return;
+        }
+
+        setLoading(true, 'Revising email and pitch...');
+        try {
+          await revisePersonaOutputs(idx);
+          setLoading(false, '');
+          close();
+        } catch (err) {
+          setLoading(false, err?.message || 'Revision failed.');
+        }
+      };
+
+      save.addEventListener('click', () => handleSave(true));
+      saveAndUpdate.addEventListener('click', () => handleSave(true));
 
       const cancel = document.createElement('button');
       cancel.type = 'button';
@@ -4958,6 +5040,7 @@ function openPersonaEditor(idx) {
 
       footer.appendChild(cancel);
       footer.appendChild(save);
+      footer.appendChild(saveAndUpdate);
     },
   });
 }
@@ -4977,6 +5060,7 @@ function clearAndRenderPersonas(personas) {
     wrapper.className = 'persona';
 
     const title = document.createElement('div');
+    title.className = 'editable-section';
     const nameEl = document.createElement('strong');
     nameEl.textContent = formatPersonaLabel(p, idx);
     title.appendChild(nameEl);

@@ -89,9 +89,8 @@
           </div>
           <button id="exportTrigger" type="button" class="primary ghosted">Export</button>
         </div>
-        <div id="appLayout">
-          <div id="mainPane">
-            <div class="mode-view" data-mode-view="targetedBrief">
+        <div id="mainPane">
+          <div class="mode-view" data-mode-view="targetedBrief">
             <div class="brief-section-header">
               <p class="section-desc">Generate company briefs with personas and outreach tailored to your product context.</p>
             </div>
@@ -206,7 +205,7 @@
                       <div class="summary-grid">
                         <div class="summary-item">
                           <div class="summary-label">Headquarters</div>
-                          <div class="summary-value-row">
+                          <div class="summary-value-row editable-section">
                             <div id="briefHqValue" class="summary-value">Headquarters not generated yet.</div>
                             <button id="briefHqEdit" type="button" class="inline-edit-btn" aria-label="Edit headquarters">
                               <span class="inline-edit-icon" data-feather="edit-3" aria-hidden="true"></span>
@@ -253,17 +252,22 @@
                   <div class="emailHeader">
                     <div class="emailHeaderLeft">
                       <h4>Generated Emails</h4>
-                      <button id="editEmailDraft" type="button" class="inline-edit-btn" aria-label="Edit email">
-                        <span class="inline-edit-icon" data-feather="edit-3" aria-hidden="true"></span>
-                        <span class="sr-only">Edit email</span>
-                      </button>
                     </div>
                   </div>
                   <div id="personaTabs" role="tablist" aria-label="Persona email drafts"></div>
-                  <div class="copyActionRow">
-                    <button id="copyEmail" type="button">Copy Email</button>
+                  <div class="email-draft-card">
+                    <div class="email-draft-controls">
+                      <button id="editEmailDraft" type="button" class="draft-icon-btn" aria-label="Edit email">
+                        <span class="inline-edit-icon" data-feather="edit-3" aria-hidden="true"></span>
+                        <span class="sr-only">Edit email</span>
+                      </button>
+                      <button id="copyEmail" type="button" class="draft-icon-btn" aria-label="Copy email">
+                        <span class="inline-edit-icon" data-feather="copy" aria-hidden="true"></span>
+                        <span class="sr-only">Copy email</span>
+                      </button>
+                    </div>
+                    <div id="emailOut" class="outputBox richText" aria-live="polite"></div>
                   </div>
-                  <div id="emailOut" class="outputBox richText" aria-live="polite"></div>
                   <div id="emailVersionControls" class="versionControls versionControls-inline" aria-live="polite"></div>
                   <div class="revisionActionRow">
                     <button id="reviseEmailPersona" type="button" class="ghost">Rewrite this email</button>
@@ -272,7 +276,7 @@
                 </div>
                 <div id="telePitchSection" class="result-section" data-brief-module="telePitch">
                   <div class="telePitchHeader">
-                    <div class="telePitchHeaderLeft">
+                    <div class="telePitchHeaderLeft editable-section">
                       <h4>Telephonic Pitch</h4>
                       <button id="editTelePitch" type="button" class="inline-edit-btn" aria-label="Edit telephonic pitch">
                         <span class="inline-edit-icon" data-feather="edit-3" aria-hidden="true"></span>

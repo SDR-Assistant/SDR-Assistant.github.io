@@ -1748,7 +1748,7 @@ h3, h4 {
     background: var(--color-surface);
     color: var(--color-text);
     border-radius: 8px;
-    padding: 6px 8px;
+    padding: 8px 12px;
     font-size: 12px;
     cursor: pointer;
     transition: background 120ms ease, border-color 120ms ease;
@@ -1756,6 +1756,13 @@ h3, h4 {
     align-items: center;
     justify-content: center;
     gap: 6px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.draft-icon-btn {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 .inline-edit-btn:hover,
@@ -1793,6 +1800,62 @@ h3, h4 {
     width: 16px;
     height: 16px;
     display: inline-block;
+}
+
+.editable-section {
+    position: relative;
+}
+
+.editable-section:hover .inline-edit-btn,
+.editable-section .inline-edit-btn:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.email-draft-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+}
+
+.email-draft-controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 6px 8px;
+    box-shadow: var(--shadow-soft);
+    z-index: 1;
+}
+
+.email-draft-card .outputBox {
+    padding-top: 52px;
+}
+
+.draft-icon-btn {
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text);
+    border-radius: 10px;
+    padding: 10px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: background 120ms ease, border-color 120ms ease;
+}
+
+.draft-icon-btn:hover,
+.draft-icon-btn:focus-visible {
+    background: var(--color-surface-alt);
+    border-color: var(--color-border-strong);
 }
 
 #briefSummarySection {

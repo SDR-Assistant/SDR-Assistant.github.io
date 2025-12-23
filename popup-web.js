@@ -80,6 +80,8 @@ const targetSectorsInput = document.getElementById('targetSectorsInput');
 const targetSectorsChips = document.getElementById('targetSectorsChips');
 const briefFormPane = document.getElementById('formPane');
 const briefCommandBar = document.getElementById('briefCommandBar');
+const briefCommandBody = document.getElementById('briefCommandBody');
+const briefBarToggle = document.getElementById('briefBarToggle');
 const briefBarStatus = document.getElementById('briefBarStatus');
 const briefChipCompany = document.getElementById('briefChipCompany');
 const briefChipLocation = document.getElementById('briefChipLocation');
@@ -88,7 +90,6 @@ const briefChipDocs = document.getElementById('briefChipDocs');
 const briefChipSections = document.getElementById('briefChipSections');
 const briefEditToggle = document.getElementById('briefEditToggle');
 const briefRegenerateBtn = document.getElementById('briefRegenerate');
-const briefAddDocBtn = document.getElementById('briefAddDoc');
 const briefVersionPill = document.getElementById('briefVersionPill');
 const briefAutosavePill = document.getElementById('briefAutosavePill');
 const briefEditDrawer = document.getElementById('briefEditDrawer');
@@ -198,6 +199,7 @@ let currentBriefRequest = {
 let briefVersionCounter = 0;
 let briefVersions = [];
 let briefUiMode = 'form';
+let briefBarCollapsed = false;
 let historyEntries = [];
 let currentHistoryId = null;
 let targetHistoryEntries = [];
@@ -1089,9 +1091,30 @@ function updateBriefCommandBarFromRequest(request = currentBriefRequest) {
   assignValue(briefChipSections?.querySelector('.chip-value'), moduleLabel);
 }
 
+function setBriefBarCollapsed(collapsed) {
+  briefBarCollapsed = !!collapsed;
+  if (briefCommandBar) {
+    briefCommandBar.classList.toggle('is-collapsed', briefBarCollapsed);
+  }
+  if (briefCommandBody) {
+    briefCommandBody.hidden = briefBarCollapsed;
+  }
+  if (briefBarToggle) {
+    const label = briefBarCollapsed ? 'Expand input bar' : 'Collapse input bar';
+    briefBarToggle.setAttribute('aria-expanded', briefBarCollapsed ? 'false' : 'true');
+    briefBarToggle.setAttribute('aria-label', label);
+    briefBarToggle.title = label;
+  }
+}
+
+function toggleBriefBarCollapsed() {
+  setBriefBarCollapsed(!briefBarCollapsed);
+}
+
 function showBriefCommandBar(show) {
   if (!briefCommandBar) return;
   briefCommandBar.hidden = !show;
+  setBriefBarCollapsed(briefBarCollapsed);
   if (show) {
     setBriefEditDrawerCollapsed(true);
     if (briefEditToggle) briefEditToggle.setAttribute('aria-expanded', 'false');
@@ -1106,6 +1129,7 @@ function setBriefUiMode(mode) {
     targetedBriefView.classList.toggle('brief-ui-form', !isBar);
   }
   if (briefCommandBar) briefCommandBar.hidden = !isBar;
+  setBriefBarCollapsed(briefBarCollapsed);
   setBriefEditDrawerCollapsed(isBar);
   if (briefEditToggle) briefEditToggle.setAttribute('aria-expanded', isBar ? 'false' : 'true');
 }
@@ -2181,8 +2205,8 @@ copyEmailBtn?.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(text);
     if (status) {
-      const personaName = getActivePersonaName();
-      status.innerText = personaName ? `Email for ${personaName} copied to clipboard.` : 'Email copied to clipboard.';
+    const personaLabel = getActivePersonaLabel();
+    status.innerText = personaLabel ? `Email for ${personaLabel} copied to clipboard.` : 'Email copied to clipboard.';
       status.style.color = '';
     }
   } catch (err) {
@@ -2197,8 +2221,8 @@ copyEmailBtn?.addEventListener('click', async () => {
       const ok = document.execCommand('copy');
       if (ok) {
         if (status) {
-          const personaName = getActivePersonaName();
-          status.innerText = personaName ? `Email for ${personaName} copied to clipboard.` : 'Email copied to clipboard.';
+        const personaLabel = getActivePersonaLabel();
+        status.innerText = personaLabel ? `Email for ${personaLabel} copied to clipboard.` : 'Email copied to clipboard.';
           status.style.color = '';
         }
       } else {
@@ -4533,23 +4557,14 @@ function clearAndRenderPersonas(personas) {
     return;
   }
 
-  personas.forEach(p => {
+  personas.forEach((p, idx) => {
     const wrapper = document.createElement('div');
     wrapper.className = 'persona';
 
     const title = document.createElement('div');
     const nameEl = document.createElement('strong');
-    nameEl.textContent = p.name || '';
+    nameEl.textContent = formatPersonaLabel(p, idx);
     title.appendChild(nameEl);
-
-    if (p.designation) {
-      const des = document.createTextNode(' — ' + p.designation);
-      title.appendChild(des);
-    }
-    if (p.department) {
-      const dept = document.createTextNode(' (' + p.department + ')');
-      title.appendChild(dept);
-    }
     wrapper.appendChild(title);
 
     const rawLink = p.zoominfo_link || p.zoomInfo || p.zoominfo || p.zoom || '';
@@ -4836,11 +4851,7 @@ function buildPersonaTabButton(draft, idx, activeIndex = 0) {
   btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
   btn.tabIndex = isActive ? 0 : -1;
 
-  const labelBits = [];
-  const name = draft.personaName && draft.personaName.trim() ? draft.personaName.trim() : `Persona ${idx + 1}`;
-  labelBits.push(name);
-  if (draft.personaDesignation) labelBits.push(draft.personaDesignation);
-  btn.textContent = labelBits.join(' \u2013 ');
+  btn.textContent = formatPersonaLabel(draft, idx);
   return btn;
 }
 
@@ -4870,10 +4881,10 @@ function syncPersonaTabActiveStates(activeIndex) {
   });
 }
 
-function getActivePersonaName() {
+function getActivePersonaLabel() {
   if (selectedPersonaIndex < 0) return '';
   const draft = personaEmailDrafts[selectedPersonaIndex];
-  return draft && draft.personaName ? draft.personaName : '';
+  return draft ? formatPersonaLabel(draft, selectedPersonaIndex) : '';
 }
 
 function activatePersonaTab(index) {
@@ -5082,9 +5093,18 @@ function setPitchVersion(personaIdx, versionIdx) {
 }
 
 function formatPersonaLabel(persona = {}, idx = 0) {
-  const name = persona.name || persona.personaName || persona.persona_name || `Persona ${idx + 1}`;
-  const role = persona.designation || persona.personaDesignation || persona.persona_designation || '';
-  return role ? `${name} (${role})` : name;
+  const role =
+    (typeof persona.designation === 'string' && persona.designation.trim()) ||
+    (typeof persona.personaDesignation === 'string' && persona.personaDesignation.trim()) ||
+    (typeof persona.persona_designation === 'string' && persona.persona_designation.trim()) ||
+    (typeof persona.title === 'string' && persona.title.trim()) ||
+    '';
+  const dept =
+    (typeof persona.department === 'string' && persona.department.trim()) ||
+    (typeof persona.personaDepartment === 'string' && persona.personaDepartment.trim()) ||
+    (typeof persona.persona_department === 'string' && persona.persona_department.trim()) ||
+    '';
+  return role || dept || 'Persona';
 }
 
 function formatRevisionCurrentText(type, indices = []) {
@@ -6170,23 +6190,22 @@ document.addEventListener('click', (evt) => {
   closeAllHistoryMenus(targetHistoryList);
 });
 
-briefEditToggle?.addEventListener('click', () => {
-  toggleBriefEditDrawer();
+briefBarToggle?.addEventListener('click', () => {
+  toggleBriefBarCollapsed();
 });
 
 briefChipCompany?.addEventListener('click', () => showBriefForm());
 briefChipLocation?.addEventListener('click', () => showBriefForm());
 briefChipProduct?.addEventListener('click', () => showBriefForm());
-briefChipDocs?.addEventListener('click', () => showBriefForm());
-briefChipSections?.addEventListener('click', () => {
+briefChipDocs?.addEventListener('click', () => {
   showBriefForm();
-  openBriefSectionsModal({ mode: 'override' });
-});
-
-briefAddDocBtn?.addEventListener('click', () => {
   if (briefDocPickerBtn) {
     briefDocPickerBtn.click();
   }
+});
+briefChipSections?.addEventListener('click', () => {
+  showBriefForm();
+  openBriefSectionsModal({ mode: 'override' });
 });
 
 briefRegenerateBtn?.addEventListener('click', async () => {

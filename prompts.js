@@ -36,7 +36,12 @@ Return markdown only as bullet points (no code fences). Use this format for each
   }
 
   function buildTelephonicPitchPrompt({ persona = {}, company, location, product, docsText, pitchFromCompany }) {
-    const personaName = persona.name || persona.personaName || persona.persona_name || "the persona";
+    const personaLabel =
+      persona.designation ||
+      persona.personaDesignation ||
+      persona.persona_designation ||
+      persona.department ||
+      "the persona";
     const designation = persona.designation || persona.personaDesignation || persona.persona_designation || "";
     const department = persona.department || persona.personaDepartment || persona.persona_department || "";
     const pitchingOrg = (pitchFromCompany && pitchFromCompany.trim()) || "your company";
@@ -63,19 +68,24 @@ Return markdown only as bullet points (no code fences). Use this format for each
   Location: ${location || "N/A"}
   Product: ${product}
   Pitching organization (you): ${pitchingOrg}
-  Persona: ${personaName}${designation ? ` | Title: ${designation}` : ""}${department ? ` | Department: ${department}` : ""}
+  Persona: ${personaLabel}${designation ? ` | Title: ${designation}` : ""}${department ? ` | Department: ${department}` : ""}
 
   Context docs (first 4000 chars each):
   ${docsText || "(no docs provided)"}
 
   Return markdown only in this exact format (no headings, no code fences):
-  Persona=${personaName}; Title=${designation || "N/A"}; Department=${department || "N/A"}
+  Persona=${personaLabel}; Title=${designation || "N/A"}; Department=${department || "N/A"}
   Telephonic Pitch:
   <45-60 second script here>`;
   }
 
   function buildPersonaEmailsPrompt({ persona = {}, company, location, product, docsText, pitchFromCompany }) {
-    const personaName = persona.name || persona.personaName || persona.persona_name || "the persona";
+    const personaLabel =
+      persona.designation ||
+      persona.personaDesignation ||
+      persona.persona_designation ||
+      persona.department ||
+      "the persona";
     const designation = persona.designation || persona.personaDesignation || persona.persona_designation || "";
     const department = persona.department || persona.personaDepartment || persona.persona_department || "";
     const pitchingOrg = (pitchFromCompany && pitchFromCompany.trim()) || "your company";
@@ -84,8 +94,8 @@ Return markdown only as bullet points (no code fences). Use this format for each
 Prospect company: ${prospectLabel}
 Pitching organization (you): ${pitchingOrg}
 Location: ${location || "N/A"}
-Product: ${product}
- Persona: ${personaName}${designation ? ` | Title: ${designation}` : ""}${department ? ` | Department: ${department}` : ""}
+ Product: ${product}
+ Persona: ${personaLabel}${designation ? ` | Title: ${designation}` : ""}${department ? ` | Department: ${department}` : ""}
 
 Context docs (first 4000 chars each):
 ${docsText || "(no docs provided)"}
@@ -95,11 +105,12 @@ Rules:
 - Create a separate subject and body for every persona listed; ensure persona_name matches the persona you are writing for.
 - Emails must include a crisp subject and concise, sales-forward body tailored to that persona.  Make the email crisp (with bullets for each point) and visually appealing with numbers and statistics from the documents uploaded. 
 - Including at least 4-5 most relevant unique selling points for the product from the context docs.
+- Always address the recipient using the placeholder "[First Name]" in the salutation and anywhere you need their name. Do not use their title or any actual name.
 - Format the brief with sufficient newline characters, punctuations and spaces, like a formal brief would.
 - Here's an example of an email brief. Do not blindly use this. Build your own based on the data from context docs:
     Subject: PVR INOX: Guaranteed 90% Faster Content Delivery with IBM Aspera.
 
-      Dear [Name],
+      Dear [First Name],
 
       PVR INOX's scale (over 1,700 screens) requires guaranteed, instantaneous content flow. Current transfer methods are slow, unreliable, and expensive.
 
@@ -122,21 +133,26 @@ Rules:
       [Your Name] [Your Title]
 
 Return markdown only in this exact format (no headings, no code fences):
-Persona=${personaName}; Title=${designation || "N/A"}; Department=${department || "N/A"}
+Persona=${personaLabel}; Title=${designation || "N/A"}; Department=${department || "N/A"}
 Subject: <subject line>
 Body:
 <short email body>`;
   }
 
   function buildEmailRevisionPrompt({ persona = {}, company, location, product, baseEmail = {}, instructions = "", pitchingOrg }) {
-    const personaName = persona.name || persona.personaName || persona.persona_name || "the persona";
+    const personaLabel =
+      persona.designation ||
+      persona.personaDesignation ||
+      persona.persona_designation ||
+      persona.department ||
+      "the persona";
     const designation = persona.designation || persona.personaDesignation || persona.persona_designation || "";
     const department = persona.department || persona.personaDepartment || persona.persona_department || "";
     const subject = baseEmail.subject || baseEmail.email_subject || "";
     const body = baseEmail.body || baseEmail.email_body || "";
     const prospectLabel = company || "the target company";
     const personaLine = [
-      `Persona: ${personaName}`,
+      `Persona: ${personaLabel}`,
       designation ? `Title: ${designation}` : null,
       department ? `Department: ${department}` : null,
     ]
@@ -166,14 +182,19 @@ Rules:
 - Preserve correct roles: you represent ${pitchingOrg || "your company"}, pitching ${company || "the target company"} on ${product || "the product"}.
 
 Return markdown only in this exact format (no headings, no code fences):
-Persona=${personaName}; Title=${designation || "N/A"}; Department=${department || "N/A"}
+Persona=${personaLabel}; Title=${designation || "N/A"}; Department=${department || "N/A"}
 Subject: <subject line>
 Body:
 <short email body>`;
   }
 
   function buildPitchRevisionPrompt({ persona = {}, company, location, product, basePitch = {}, instructions = "", pitchingOrg }) {
-    const personaName = persona.name || persona.personaName || persona.persona_name || "the persona";
+    const personaLabel =
+      persona.designation ||
+      persona.personaDesignation ||
+      persona.persona_designation ||
+      persona.department ||
+      "the persona";
     const designation = persona.designation || persona.personaDesignation || persona.persona_designation || "";
     const department = persona.department || persona.personaDepartment || persona.persona_department || "";
     const hasExisting =
@@ -186,7 +207,7 @@ Body:
       basePitch.full_pitch;
 
     const personaLine = [
-      `Persona: ${personaName}`,
+      `Persona: ${personaLabel}`,
       designation ? `Title: ${designation}` : null,
       department ? `Department: ${department}` : null,
     ]
@@ -212,7 +233,7 @@ Instructions:
 - Do not split the response into labeled sections (call goal, opener, CTA, etc.); keep everything woven into one tight script.
 
 Return markdown only in this exact format (no headings, no code fences):
-Persona=${personaName}; Title=${designation || "N/A"}; Department=${department || "N/A"}
+Persona=${personaLabel}; Title=${designation || "N/A"}; Department=${department || "N/A"}
 Telephonic Pitch:
 <45-60 second script>`;
   }
@@ -253,10 +274,12 @@ Product: ${product}
 Context docs (first 4000 chars each):
 ${docsText || "(no docs provided)"}
 
+Do not include personal names in the personas. Refer to personas only by their title/role (e.g., CISO, VP Engineering).
 Include a LinkedIn People search keyword string for each persona that would help find the right titles at ${companyName || "the company"} for ${product}. Do not return a LinkedIn URL - only the keyword string.
 Return a simple keyword search string that always includes the corporation name at the front, followed by only the most common title for the persona's position. Do not include title variations, quotes, OR/AND operators, or other Boolean connectors (e.g., CompanyName VP Security).
+The SearchLink should be a Google query that combines only the corporation name and the persona's position (no personal names).
 Return markdown only. Provide one bullet per persona using this format (no headings, no code fences):
-- Name=<Full name>; Title=<Job title>; Department=<Department>; SearchLink=<ZoomInfo/LinkedIn style Google search link>; LinkedInKeywords=<keyword string for LinkedIn People search>`;
+- Title=<Job title>; Department=<Department>; SearchLink=<ZoomInfo/LinkedIn style Google search link>; LinkedInKeywords=<keyword string for LinkedIn People search>`;
   }
 
   function buildProductContextPrompt({ product }) {

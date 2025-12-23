@@ -799,6 +799,7 @@ function parsePersonasFromMarkdown(markdown = "", fallbackCompany = "", productH
     const department = kv.department || kv.dept || "";
     const rawLinkedinKeywords =
       kv.linkedin_keywords || kv.linkedinsearch || kv.linkedinquery || kv.linkedin || kv.linkedinkeywords || "";
+    // We ignore any provided search links that may contain personal names and regenerate using only company + position.
     const link =
       kv.searchlink ||
       kv.search_link ||
@@ -821,7 +822,7 @@ function parsePersonasFromMarkdown(markdown = "", fallbackCompany = "", productH
       department,
       linkedin_keywords: linkedinKeywords || "",
       linkedin_search_url: toLinkedInPeopleSearchUrl(linkedinKeywords),
-      zoominfo_link: link || buildZoomInfoSearchLink({ name, designation, department }, fallbackCompany),
+      zoominfo_link: buildZoomInfoSearchLink({ designation, department }, fallbackCompany) || link,
     });
   });
   return personas;
@@ -1115,19 +1116,23 @@ function toLinkedInPeopleSearchUrl(searchString) {
 }
 
 function buildLinkedInKeywordFallback(persona = {}, companyName = "", productName = "") {
-  const positionHint = persona.designation || persona.department || productName || persona.name || "";
+  // Keep LinkedIn people search keywords impersonal: use role/department, never the individual's name.
+  const positionHint = persona.designation || persona.department || productName || "";
   return normalizeLinkedInKeywords(positionHint, companyName, positionHint);
 }
 
-function buildZoomInfoSearchLink(persona, companyName) {
+function buildZoomInfoSearchLink(persona = {}, companyName = "") {
+  // Build a Google query that only contains the company name and the persona's role/department (no personal names).
   const parts = [];
+  const role = typeof persona.designation === "string" ? persona.designation.trim() : "";
+  const dept = typeof persona.department === "string" ? persona.department.trim() : "";
+  const company = typeof companyName === "string" ? companyName.trim() : "";
 
-  if (persona.name) parts.push(`"${persona.name.trim()}"`);
-  if (persona.designation) parts.push(`"${persona.designation.trim()}"`);
-  if (persona.department) parts.push(`"${persona.department.trim()}"`);
-  if (companyName) parts.push(`"${companyName.trim()}"`);
+  if (company) parts.push(`"${company}"`);
+  if (role) parts.push(`"${role}"`);
+  else if (dept) parts.push(`"${dept}"`);
 
-  const scope = `(site:zoominfo.com OR site:cognism.com OR site:linkedin.com/in)`;
+  const scope = `site:linkedin.com/in`;
 
   const query = `${scope} ${parts.join(" ")}`.trim();
 
@@ -2216,13 +2221,11 @@ function summarizePersonasForTelepitch(personas = []) {
   if (!Array.isArray(personas) || !personas.length) return "";
   return personas
     .map((persona, idx) => {
-      const bits = [
-        `Persona ${idx + 1}:`,
-        `Name: ${persona.name || `Persona ${idx + 1}`}`,
-        persona.designation ? `Designation: ${persona.designation}` : null,
-        persona.department ? `Department: ${persona.department}` : null,
-      ].filter(Boolean);
-      return bits.join(" ");
+      const role = persona.designation || persona.department || `Persona`;
+      const bits = [role, persona.department && role !== persona.department ? `Department: ${persona.department}` : null]
+        .filter(Boolean)
+        .join(" - ");
+      return bits || `Persona`;
     })
     .join("\n");
 }
@@ -3904,6 +3907,7 @@ if (typeof module !== "undefined" && module.exports) {
     parseMarkdownTable,
     toLinkedInPeopleSearchUrl,
     buildLinkedInKeywordFallback,
+    buildZoomInfoSearchLink,
   };
 }
 

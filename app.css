@@ -2085,12 +2085,70 @@ h3, h4 {
     border-radius: 10px;
     box-shadow: var(--shadow-card);
 }
-
+.brief-command-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.brief-command-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.brief-command-bar.is-collapsed .brief-command-body {
+    display: none;
+}
+.brief-command-toggle {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--color-text-muted);
+    border-radius: 8px;
+    padding: 6px;
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+}
+.brief-command-toggle:hover {
+    background: var(--color-surface-muted);
+    color: var(--color-text-strong);
+    border-color: var(--color-border-muted);
+}
+.brief-command-toggle:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus-ring);
+    border-color: var(--color-primary-soft-border);
+}
+.brief-command-toggle .bar-icon {
+    width: 18px;
+    height: 18px;
+    transition: transform 0.18s ease;
+}
+.brief-command-bar.is-collapsed .brief-command-toggle .bar-icon {
+    transform: rotate(180deg);
+}
+ 
 .brief-command-row {
     display: flex;
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
+}
+.brief-command-inline {
+    flex-wrap: nowrap;
+    align-items: center;
+}
+.brief-command-inline .brief-chip-row-inline {
+    flex: 1 1 auto;
+}
+.brief-command-spacer {
+    flex: 1 1 auto;
+    min-width: 12px;
+}
+.brief-bar-regenerate {
+    flex-shrink: 0;
 }
 
 .brief-command-inputs {
@@ -2100,7 +2158,8 @@ h3, h4 {
 .brief-command-label {
     font-weight: 700;
     color: var(--color-text-strong);
-    min-width: 64px;
+    display: block;
+    margin: 0;
 }
 
 .brief-chip-row {
@@ -2115,6 +2174,7 @@ h3, h4 {
     align-items: center;
     gap: 6px;
     padding: 6px 10px;
+    margin: 0;
     border-radius: 999px;
     border: 1px solid var(--color-border);
     background: var(--color-surface-alt);
@@ -2137,6 +2197,28 @@ h3, h4 {
 .brief-chip .chip-value {
     color: var(--color-text-strong);
     font-weight: 700;
+}
+.brief-chip-editable {
+    position: relative;
+    padding-right: 32px;
+}
+.brief-chip-editable .chip-edit {
+    position: absolute;
+    inset: 50% 10px auto auto;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    color: var(--color-text-muted);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.brief-chip-editable:hover .chip-edit {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 .brief-command-actions {

@@ -96,55 +96,60 @@
               <p class="section-desc">Generate company briefs with personas and outreach tailored to your product context.</p>
             </div>
             <div id="briefCommandBar" class="brief-command-bar" hidden aria-label="Brief command bar">
-              <div class="brief-command-row brief-command-inputs">
-                <div class="brief-command-label">Inputs:</div>
-                <div class="brief-chip-row" role="list">
-                  <button id="briefChipCompany" class="brief-chip" type="button" role="listitem">
-                    <span class="chip-label">Company</span>
-                    <span class="chip-value" data-brief-chip-company>Not set</span>
-                  </button>
-                  <button id="briefChipLocation" class="brief-chip" type="button" role="listitem">
-                    <span class="chip-label">Location</span>
-                    <span class="chip-value" data-brief-chip-location>Not set</span>
-                  </button>
-                  <button id="briefChipProduct" class="brief-chip" type="button" role="listitem">
-                    <span class="chip-label">Product</span>
-                    <span class="chip-value" data-brief-chip-product>Not set</span>
-                  </button>
-                  <button id="briefChipDocs" class="brief-chip brief-chip-compact" type="button" role="listitem">
-                    <span class="chip-label">Docs</span>
-                    <span class="chip-value" data-brief-chip-docs>0</span>
-                  </button>
-                  <button id="briefChipSections" class="brief-chip brief-chip-compact" type="button" role="listitem">
-                    <span class="chip-label">Sections</span>
-                    <span class="chip-value" data-brief-chip-sections>Default</span>
-                  </button>
-                </div>
+              <div class="brief-command-header">
+                <div class="brief-command-label">Inputs</div>
+                <button
+                  id="briefBarToggle"
+                  class="brief-command-toggle"
+                  type="button"
+                  aria-label="Collapse input bar"
+                  aria-expanded="true"
+                  aria-controls="briefCommandBody"
+                  title="Collapse input bar"
+                >
+                  <span class="sr-only">Toggle input bar</span>
+                  <span class="bar-icon" aria-hidden="true" data-feather="chevron-up"></span>
+                </button>
               </div>
-              <div class="brief-command-row brief-command-actions">
-                <div class="brief-actions-left">
-                  <button id="briefEditToggle" type="button" class="bar-icon-btn" aria-expanded="false" aria-controls="formPane">
-                    <span class="bar-icon" aria-hidden="true" data-feather="edit-3"></span>
-                    <span class="bar-icon-label">Edit inputs</span>
-                  </button>
-                  <button id="briefRegenerate" type="button" class="bar-icon-btn">
+              <div id="briefCommandBody" class="brief-command-body">
+                <div class="brief-command-row brief-command-inline">
+                  <button id="briefRegenerate" type="button" class="bar-icon-btn brief-bar-regenerate">
                     <span class="bar-icon" aria-hidden="true" data-feather="rotate-cw"></span>
                     <span class="bar-icon-label">Regenerate</span>
                   </button>
-                  <button id="briefAddDoc" type="button" class="bar-icon-btn">
-                    <span class="bar-icon" aria-hidden="true" data-feather="file-plus"></span>
-                    <span class="bar-icon-label">Add document</span>
-                  </button>
-                </div>
-                <div class="brief-actions-right">
-                  <span id="briefVersionPill" class="brief-pill" hidden>v1</span>
-                  <span id="briefAutosavePill" class="brief-pill brief-pill-muted">Auto-save</span>
-                  <label class="brief-version-picker">
-                    <span class="sr-only">Versions</span>
-                    <select id="briefVersionSelect" aria-label="Brief versions">
-                      <option value="">Current run</option>
-                    </select>
-                  </label>
+                  <div class="brief-chip-row brief-chip-row-inline" role="list">
+                    <button id="briefChipCompany" class="brief-chip brief-chip-editable" type="button" role="listitem">
+                      <span class="chip-label">Company</span>
+                      <span class="chip-value" data-brief-chip-company>Not set</span>
+                      <span class="chip-edit" aria-hidden="true" data-feather="edit-3"></span>
+                      <span class="sr-only">Edit company</span>
+                    </button>
+                    <button id="briefChipLocation" class="brief-chip brief-chip-editable" type="button" role="listitem">
+                      <span class="chip-label">Location</span>
+                      <span class="chip-value" data-brief-chip-location>Not set</span>
+                      <span class="chip-edit" aria-hidden="true" data-feather="edit-3"></span>
+                      <span class="sr-only">Edit location</span>
+                    </button>
+                    <button id="briefChipProduct" class="brief-chip brief-chip-editable" type="button" role="listitem">
+                      <span class="chip-label">Product</span>
+                      <span class="chip-value" data-brief-chip-product>Not set</span>
+                      <span class="chip-edit" aria-hidden="true" data-feather="edit-3"></span>
+                      <span class="sr-only">Edit product</span>
+                    </button>
+                    <button id="briefChipDocs" class="brief-chip brief-chip-compact brief-chip-editable" type="button" role="listitem">
+                      <span class="chip-label">Docs</span>
+                      <span class="chip-value" data-brief-chip-docs>0</span>
+                      <span class="chip-edit" aria-hidden="true" data-feather="edit-3"></span>
+                      <span class="sr-only">Edit docs</span>
+                    </button>
+                    <button id="briefChipSections" class="brief-chip brief-chip-compact brief-chip-editable" type="button" role="listitem">
+                      <span class="chip-label">Sections</span>
+                      <span class="chip-value" data-brief-chip-sections>Default</span>
+                      <span class="chip-edit" aria-hidden="true" data-feather="edit-3"></span>
+                      <span class="sr-only">Edit sections</span>
+                    </button>
+                  </div>
+                  <div class="brief-command-spacer" aria-hidden="true"></div>
                   <div id="briefBarStatus" class="brief-bar-status" role="status" aria-live="polite"></div>
                 </div>
               </div>

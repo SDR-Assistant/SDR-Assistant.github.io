@@ -43,6 +43,7 @@ const {
   parseMarkdownTable,
   toLinkedInPeopleSearchUrl,
   buildLinkedInKeywordFallback,
+  buildZoomInfoSearchLink,
 } = require(path.join(__dirname, "..", "background-web.js"));
 
 const tests = [];
@@ -254,6 +255,10 @@ test("parsePersonasFromMarkdown extracts persona list", () => {
   assert.strictEqual(personas[1].linkedin_keywords, "ACME CTO");
   assert.ok(personas[1].linkedin_search_url.includes("linkedin.com/search/results/people/"));
   assert.ok(personas[1].linkedin_search_url.includes("keywords=ACME%20CTO"));
+  const encodedRole = encodeURIComponent("VP Marketing");
+  assert.ok(personas[0].zoominfo_link.includes("ACME"));
+  assert.ok(personas[0].zoominfo_link.includes(encodedRole));
+  assert.ok(!personas[0].zoominfo_link.includes("Alice"));
 });
 
 test("parsePersonaEmailMarkdown extracts subject and body", () => {
@@ -297,6 +302,17 @@ test("buildLinkedInKeywordFallback prefixes company and keeps primary title", ()
   assert.ok(keywords.startsWith("ACME Corp"));
   assert.ok(keywords.includes("Head of IT"));
   assert.ok(!keywords.includes("Cloud Security"));
+});
+
+test("buildZoomInfoSearchLink omits persona names and keeps company + role", () => {
+  const url = buildZoomInfoSearchLink(
+    { name: "Jane Smith", designation: "CISO", department: "Security" },
+    "ACME Corp"
+  );
+  assert.ok(url.includes(encodeURIComponent("ACME Corp")));
+  assert.ok(url.includes("CISO"));
+  assert.ok(!url.includes("Jane"));
+  assert.ok(!url.includes("Smith"));
 });
 
 test("parseRevenueSectorMarkdown reads labeled lines", () => {

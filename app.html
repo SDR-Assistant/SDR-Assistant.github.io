@@ -206,15 +206,25 @@
                       <div class="summary-grid">
                         <div class="summary-item">
                           <div class="summary-label">Headquarters</div>
-                          <div id="briefHqValue" class="summary-value">Headquarters not generated yet.</div>
+                          <div class="summary-value-row">
+                            <div id="briefHqValue" class="summary-value">Headquarters not generated yet.</div>
+                            <button id="briefHqEdit" type="button" class="inline-edit-btn" aria-label="Edit headquarters">
+                              <span class="inline-edit-icon" data-feather="edit-3" aria-hidden="true"></span>
+                              <span class="sr-only">Edit headquarters</span>
+                            </button>
+                          </div>
                         </div>
                         <div class="summary-item">
-                          <div class="summary-label">Revenue</div>
-                          <div id="briefRevenueValue" class="summary-value">Revenue not generated yet.</div>
+                          <div class="summary-label summary-label-locked">Revenue</div>
+                          <div class="summary-value summary-value-locked" aria-label="Revenue is read only" title="Locked (read-only)">
+                            <span id="briefRevenueValue">Revenue not generated yet.</span>
+                          </div>
                         </div>
                         <div class="summary-item">
-                          <div class="summary-label">Industry Sector</div>
-                          <div id="briefIndustryValue" class="summary-value">Industry sector not generated yet.</div>
+                          <div class="summary-label summary-label-locked">Industry Sector</div>
+                          <div class="summary-value summary-value-locked" aria-label="Industry sector is read only" title="Locked (read-only)">
+                            <span id="briefIndustryValue">Industry sector not generated yet.</span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -233,13 +243,20 @@
                   </div>
                 </div>
                 <div class="result-section" data-brief-module="personas">
-                  <h4>Personas</h4>
+                  <div class="section-header-row">
+                    <h4>Personas</h4>
+                    <span class="section-hint">Editable. Top news, revenue, sector stay locked.</span>
+                  </div>
                   <div id="personas"></div>
                 </div>
                 <div id="emailSection" class="result-section" data-brief-module="emails">
                   <div class="emailHeader">
                     <div class="emailHeaderLeft">
                       <h4>Generated Emails</h4>
+                      <button id="editEmailDraft" type="button" class="inline-edit-btn" aria-label="Edit email">
+                        <span class="inline-edit-icon" data-feather="edit-3" aria-hidden="true"></span>
+                        <span class="sr-only">Edit email</span>
+                      </button>
                     </div>
                   </div>
                   <div id="personaTabs" role="tablist" aria-label="Persona email drafts"></div>
@@ -257,6 +274,10 @@
                   <div class="telePitchHeader">
                     <div class="telePitchHeaderLeft">
                       <h4>Telephonic Pitch</h4>
+                      <button id="editTelePitch" type="button" class="inline-edit-btn" aria-label="Edit telephonic pitch">
+                        <span class="inline-edit-icon" data-feather="edit-3" aria-hidden="true"></span>
+                        <span class="sr-only">Edit telephonic pitch</span>
+                      </button>
                     </div>
                     <div class="telePitchActions">
                       <span class="telePitchHint">Updates with persona selection.</span>
@@ -337,6 +358,8 @@
     <script src="chrome-shim.js"></script>
     <script src="prompts.js"></script>
     <script src="background-web.js"></script>
+    <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/toastui-editor.min.css" />
+    <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
     <script src="https://unpkg.com/feather-icons@4.29.2/dist/feather.min.js"></script>
     <script src="popup-web.js"></script>
     <script>

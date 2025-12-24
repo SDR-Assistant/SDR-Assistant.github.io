@@ -349,7 +349,8 @@ Instructions:
 - Do not return any normal text or markdown.
 - The code MUST define a function: function transform(entry, helpers) { return { "<Header>": value, ... }; }
 - Use helpers.get(entry, "path") to read values by path.
-- Use only these helpers: get, coalesce, join, truncate, stripHtml, toString.
+- Use only these helpers: get, coalesce, join, truncate, stripHtml, toString, serial.
+- If a column header implies a serial number (e.g., "Serial", "S.No.", "Index", "Row"), populate it using helpers.serial() (1-based, sequential).
 - Do not use loops, arrow functions, eval, new Function, network calls, or globals.
 - Return empty strings for missing values.
 
@@ -359,7 +360,8 @@ function transform(entry, helpers) {
     "Company": helpers.coalesce(helpers.get(entry, "result.company_name"), helpers.get(entry, "request.company")),
     "HQ Location": helpers.get(entry, "result.hq_location"),
     "Top News": helpers.join(helpers.get(entry, "result.top_5_news[].title"), "; "),
-    "Brief Summary": helpers.truncate(helpers.stripHtml(helpers.get(entry, "result.brief_html")), 300)
+    "Brief Summary": helpers.truncate(helpers.stripHtml(helpers.get(entry, "result.brief_html")), 300),
+    "Serial": helpers.serial()
   };
 }`;
   }
@@ -401,7 +403,8 @@ Instructions:
 - Do not return any normal text or markdown.
 - The code MUST define a function: function transform(entry, helpers) { return { "<Header>": value, ... }; }
 - Use helpers.get(entry, "path") to read values by path.
-- Use only these helpers: get, coalesce, join, truncate, stripHtml, toString.
+- Use only these helpers: get, coalesce, join, truncate, stripHtml, toString, serial.
+- If a column header implies a serial number (e.g., "Serial", "S.No.", "Index", "Row"), populate it using helpers.serial() (1-based, sequential).
 - Do not use loops, arrow functions, eval, new Function, network calls, or globals.
 - Return empty strings for missing values.`;
   }

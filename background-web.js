@@ -13,6 +13,8 @@ const TELEMETRY_FLUSH_ALARM = "telemetryFlushAlarm";
 const TELEMETRY_FLUSH_INTERVAL_MINUTES = 5;
 const TELEMETRY_BATCH_SIZE = 10;
 const TELEMETRY_QUEUE_LIMIT = 200;
+const PERSONA_NORMALIZE_ALARM = "personaNormalizeAlarm";
+const PERSONA_NORMALIZE_INTERVAL_MINUTES = 0.1666667;
 const INSTALLATION_ID_KEY = "installationId";
 const LAST_ACTIVE_PING_DATE_KEY = "lastActivePingDate";
 const LLM_PROVIDER_STORAGE_KEY = "llmProvider";
@@ -31,8 +33,9 @@ const DEFAULT_LLM_MODELS = {
 const GROQ_LEGACY_MODEL = "gpt-oss-20b";
 const GROQ_SECONDARY_MODEL = DEFAULT_LLM_MODELS[LLMProvider.GROQ];
 const LLAMA_33_MODEL = "llama-3.3-70b-versatile";
+const PERSONA_EMAIL_MODEL = "qwen/qwen3-32b";
 const EXPORT_TRANSFORM_TOOL_NAME = "run_js";
-const EXPORT_TRANSFORM_MODEL = LLAMA_33_MODEL;
+const EXPORT_TRANSFORM_MODEL = "qwen/qwen3-32b";
 const EXPORT_SCHEMA_SAMPLE_LIMIT = 50;
 const EXPORT_TRANSFORM_TIMEOUT_MS = 1200;
 const EXPORT_TRANSFORM_MAX_SCRIPT_LENGTH = 12000;
@@ -437,6 +440,8 @@ async function callGroqDirect(promptText, opts = {}, providerSettings = {}) {
     ? (userCfg.stopSequences || userCfg.stop).filter((s) => typeof s === "string" && s.length)
     : null;
   const reasoningEffort = userCfg.reasoningEffort || opts.reasoningEffort;
+  const reasoning = userCfg.reasoning || opts.reasoning;
+  const reasoningFormat = userCfg.reasoning_format || opts.reasoning_format;
   const stream = opts.stream === true || userCfg.stream === true ? true : false;
   const isCompoundModel = modelName === GROQ_COMPOUND_MODEL || modelName === GROQ_COMPOUND_MINI_MODEL;
 
@@ -484,6 +489,12 @@ async function callGroqDirect(promptText, opts = {}, providerSettings = {}) {
   }
   if (reasoningEffort) {
     body.reasoning_effort = reasoningEffort;
+  }
+  if (typeof reasoning === "string" && reasoning.trim()) {
+    body.reasoning = reasoning.trim();
+  }
+  if (typeof reasoningFormat === "string" && reasoningFormat.trim()) {
+    body.reasoning_format = reasoningFormat.trim();
   }
 
   try {
@@ -834,7 +845,8 @@ async function requestExportTransformScript({ columns, schema, templateName, pre
       "You are a coding assistant. If you need to run JavaScript to compute an exact result, call the run_js tool.",
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 1500,
+      maxOutputTokens: 5000,
+      reasoning_format: "hidden",
     },
   });
 
@@ -1613,6 +1625,81 @@ chrome.runtime?.onStartup?.addListener(() => {
 ensureTelemetryAlarm();
 flushTelemetryQueue().catch(() => {});
 
+function normalizePersonaFieldsInEntry(entry) {
+  if (!entry || typeof entry !== "object") return { changed: false, entry };
+  const next = { ...entry };
+  let changed = false;
+  const personas = Array.isArray(next?.result?.personas) ? next.result.personas : [];
+  const normalizedPersonas = personas.map((persona) => {
+    if (!persona || typeof persona !== "object") return persona;
+    const clone = { ...persona };
+    if (clone.personaDesignation && !clone.designation) {
+      clone.designation = clone.personaDesignation;
+      delete clone.personaDesignation;
+      changed = true;
+    }
+    if (clone.personaDepartment && !clone.department) {
+      clone.department = clone.personaDepartment;
+      delete clone.personaDepartment;
+      changed = true;
+    }
+    return clone;
+  });
+  if (changed) {
+    next.result = { ...(next.result || {}), personas: normalizedPersonas };
+  }
+  return { changed, entry: next };
+}
+
+async function normalizePersonaFieldsInHistory() {
+  try {
+    const data = await chrome.storage.local.get([RESEARCH_HISTORY_KEY]);
+    const history = Array.isArray(data[RESEARCH_HISTORY_KEY]) ? data[RESEARCH_HISTORY_KEY] : [];
+    if (!history.length) return;
+    let mutated = false;
+    const updated = history.map((item) => {
+      const { changed, entry } = normalizePersonaFieldsInEntry(item);
+      if (changed) mutated = true;
+      return entry;
+    });
+    if (mutated) {
+      await chrome.storage.local.set({ [RESEARCH_HISTORY_KEY]: updated });
+    }
+  } catch (err) {
+    console.warn("Failed to normalize persona fields", err);
+  }
+}
+
+function ensurePersonaNormalizeAlarm() {
+  try {
+    chrome.alarms.create(PERSONA_NORMALIZE_ALARM, {
+      delayInMinutes: 1,
+      periodInMinutes: PERSONA_NORMALIZE_INTERVAL_MINUTES,
+    });
+  } catch (err) {
+    console.warn("Failed to schedule persona normalization alarm", err);
+  }
+}
+
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm && alarm.name === PERSONA_NORMALIZE_ALARM) {
+    normalizePersonaFieldsInHistory().catch(() => {});
+  }
+});
+
+chrome.runtime?.onInstalled.addListener(() => {
+  ensurePersonaNormalizeAlarm();
+  normalizePersonaFieldsInHistory().catch(() => {});
+});
+
+chrome.runtime?.onStartup?.addListener(() => {
+  ensurePersonaNormalizeAlarm();
+  normalizePersonaFieldsInHistory().catch(() => {});
+});
+
+ensurePersonaNormalizeAlarm();
+normalizePersonaFieldsInHistory().catch(() => {});
+
 function normalizeTargetCompanies(rawList = []) {
   if (!Array.isArray(rawList)) return [];
   const normalized = [];
@@ -1648,7 +1735,14 @@ function normalizeTargetCompanies(rawList = []) {
 
 async function generateTargets({ product, location, sectors, docs, docName, docText, docBase64 }) {
   const trimmedProduct = typeof product === "string" ? product.trim() : "";
-  const trimmedLocation = typeof location === "string" ? location.trim() : "";
+  const normalizedLocations = Array.isArray(location)
+    ? location
+        .map((loc) => (typeof loc === "string" ? loc.trim() : ""))
+        .filter((loc) => !!loc)
+    : typeof location === "string" && location.trim()
+      ? [location.trim()]
+      : [];
+  const trimmedLocation = normalizedLocations.join(", ");
   const normalizedSectors = Array.isArray(sectors)
     ? sectors
         .map((sector) => (typeof sector === "string" ? sector.trim() : ""))
@@ -1878,6 +1972,39 @@ function ensureRowValues(row, columns) {
     normalized[header] = sanitizeExportValue(value);
   });
   return normalized;
+}
+
+const SERIAL_HEADER_PATTERNS = [
+  "serial",
+  "s.no",
+  "sno",
+  "s no",
+  "s #",
+  "s#",
+  "index",
+  "row",
+  "row #",
+  "row number",
+];
+
+function headerIsSerial(header = "") {
+  const norm = String(header || "").trim().toLowerCase();
+  return SERIAL_HEADER_PATTERNS.some((pat) => norm === pat || norm === pat.replace(/\s+/g, ""));
+}
+
+function injectSerialNumbers(rows = [], columns = []) {
+  if (!Array.isArray(rows) || !rows.length || !Array.isArray(columns) || !columns.length) return rows;
+  const serialHeaders = columns.filter((c) => c && headerIsSerial(c.header)).map((c) => c.header);
+  if (!serialHeaders.length) return rows;
+  return rows.map((row, idx) => {
+    const next = { ...(row || {}) };
+    serialHeaders.forEach((h) => {
+      if (next[h] === undefined || next[h] === null || next[h] === "") {
+        next[h] = idx + 1;
+      }
+    });
+    return next;
+  });
 }
 
 function filterHistoryEntries(entries, selection = {}) {
@@ -2897,10 +3024,11 @@ async function generatePersonaEmails({ personas, company, location, product, doc
     }
 
     const resp = await callLlmWithRetry(prompt, {
-      model: LLAMA_33_MODEL,
-      secondaryModel: LLAMA_33_MODEL,
+      model: PERSONA_EMAIL_MODEL,
+      secondaryModel: PERSONA_EMAIL_MODEL,
+      reasoning_format: "hidden",
       generationConfig: {
-        temperature: 0.2,
+        temperature: 0.4,
         maxOutputTokens: 12000,
       },
     });
@@ -3046,10 +3174,11 @@ async function revisePersonaEmail({ persona, email, company, product, location, 
     });
 
     const resp = await callLlmWithRetry(prompt, {
-      model: LLAMA_33_MODEL,
-      secondaryModel: LLAMA_33_MODEL,
+      model: PERSONA_EMAIL_MODEL,
+      secondaryModel: PERSONA_EMAIL_MODEL,
+      reasoning_format: "hidden",
       generationConfig: {
-        temperature: 0.2,
+        temperature: 0.4,
         maxOutputTokens: 12000,
       },
     });
@@ -4134,7 +4263,8 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
             return;
           }
 
-          const normalizedRows = tableRows.map((row) => ensureRowValues(row || {}, columns));
+          const withSerials = injectSerialNumbers(tableRows, columns);
+          const normalizedRows = withSerials.map((row) => ensureRowValues(row || {}, columns));
           const headers = columns.map((col) => col.header);
           const notes = "";
 

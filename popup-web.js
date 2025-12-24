@@ -1143,8 +1143,7 @@ function renderTargetSectorChips() {
     removeBtn.className = 'sector-chip-remove';
     removeBtn.dataset.action = 'remove-sector';
     removeBtn.dataset.value = sector;
-    removeBtn.setAttribute('aria-label', `Remove ${sector}`);
-    removeBtn.textContent = '×';
+    removeBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
     chip.appendChild(removeBtn);
 
     targetSectorsChips.appendChild(chip);
@@ -1697,7 +1696,27 @@ function openBriefInputsModal({ focusField } = {}) {
 
 function openTargetInputsModal({ focusField } = {}) {
   const mergedRequest = { ...buildTargetRequestFromForm(), ...(currentTargetRequest || {}) };
-  mergedRequest.sectors = Array.isArray(mergedRequest.sectors) ? mergedRequest.sectors.filter(Boolean) : [];
+  const mergedSectors = [];
+  (Array.isArray(mergedRequest.sectors) ? mergedRequest.sectors : []).forEach((value) => {
+    const normalized = normalizeTargetSector(value);
+    if (!normalized) return;
+    if (mergedSectors.some((item) => item.toLowerCase() === normalized.toLowerCase())) return;
+    mergedSectors.push(normalized);
+  });
+  const mergedLocations = [];
+  if (Array.isArray(mergedRequest.location)) {
+    mergedRequest.location.forEach((value) => {
+      const normalized = normalizeTargetLocation(value);
+      if (!normalized) return;
+      if (mergedLocations.some((item) => item.toLowerCase() === normalized.toLowerCase())) return;
+      mergedLocations.push(normalized);
+    });
+  } else if (mergedRequest.location) {
+    const normalized = normalizeTargetLocation(mergedRequest.location);
+    if (normalized) mergedLocations.push(normalized);
+  }
+  mergedRequest.sectors = mergedSectors;
+  mergedRequest.location = mergedLocations;
   mergedRequest.docs = getSelectedDocObjects(Mode.TARGET_GENERATION);
 
   openModal({
@@ -1733,8 +1752,134 @@ function openTargetInputsModal({ focusField } = {}) {
       };
 
       const productInput = buildField('Product', mergedRequest.product, 'e.g., Cloud Security Platform');
-      const locationInput = buildField('Locations', Array.isArray(mergedRequest.location) ? mergedRequest.location.join(', ') : mergedRequest.location, 'e.g., Singapore, Dubai');
-      const sectorsInput = buildField('Sectors', mergedRequest.sectors.join(', '), 'e.g., FinTech, Healthcare');
+      const buildChipField = ({
+        labelText, description, placeholder, hint, values, normalizeFn, chipsClass = 'target-sectors-chips',
+      }) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'input-card';
+        const label = document.createElement('label');
+        label.textContent = labelText;
+        wrapper.appendChild(label);
+        if (description) {
+          const desc = document.createElement('p');
+          desc.className = 'input-desc';
+          desc.textContent = description;
+          wrapper.appendChild(desc);
+        }
+        const field = document.createElement('div');
+        field.className = 'target-sectors-field';
+        const chipsEl = document.createElement('div');
+        chipsEl.className = chipsClass;
+        chipsEl.setAttribute('aria-live', 'polite');
+        chipsEl.setAttribute('aria-label', `${labelText} selections`);
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = placeholder || '';
+        input.autocomplete = 'off';
+        const hintEl = document.createElement('p');
+        hintEl.className = 'target-sectors-hint';
+        hintEl.textContent = hint;
+        field.appendChild(chipsEl);
+        field.appendChild(input);
+        field.appendChild(hintEl);
+        wrapper.appendChild(field);
+        section.appendChild(wrapper);
+
+        const render = () => {
+          chipsEl.innerHTML = '';
+          values.forEach((value) => {
+            const chip = document.createElement('span');
+            chip.className = 'sector-chip';
+            const chipLabel = document.createElement('span');
+            chipLabel.textContent = value;
+            chip.appendChild(chipLabel);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'sector-chip-remove';
+            removeBtn.dataset.value = value;
+            removeBtn.setAttribute('aria-label', `Remove ${value}`);
+            if (chipsClass === 'target-locations-chips') {
+              removeBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+            } else {
+              removeBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+            }
+            removeBtn.addEventListener('click', () => {
+              const idx = values.findIndex((item) => item.toLowerCase() === value.toLowerCase());
+              if (idx !== -1) {
+                values.splice(idx, 1);
+                render();
+                input.focus();
+              }
+            });
+            chip.appendChild(removeBtn);
+            chipsEl.appendChild(chip);
+          });
+        };
+
+        const addValue = (raw) => {
+          const normalized = normalizeFn(raw);
+          if (!normalized) return;
+          if (values.some((item) => item.toLowerCase() === normalized.toLowerCase())) return;
+          values.push(normalized);
+          render();
+        };
+
+        const commitPending = () => {
+          const pending = normalizeFn(input.value);
+          if (pending) addValue(pending);
+          input.value = '';
+        };
+
+        input.addEventListener('input', (evt) => {
+          const { value } = evt.target;
+          if (!value.includes(',')) return;
+          const parts = value.split(',');
+          const remainder = parts.pop();
+          parts.forEach((part) => addValue(part));
+          evt.target.value = remainder ? remainder.trimStart() : '';
+        });
+
+        input.addEventListener('keydown', (evt) => {
+          if (evt.key === 'Enter') {
+            evt.preventDefault();
+            commitPending();
+          }
+        });
+
+        input.addEventListener('blur', () => {
+          commitPending();
+        });
+
+        render();
+
+        return {
+          input,
+          getValues: () => [...values],
+          commitPending,
+        };
+      };
+
+      const modalSectors = [...mergedRequest.sectors];
+      const modalLocations = [...mergedRequest.location];
+
+      const { input: locationInput, getValues: getLocationValues, commitPending: commitLocationPending } = buildChipField({
+        labelText: 'Locations',
+        description: 'Where should we hunt for new logos? Add cities or regions.',
+        placeholder: 'e.g., Singapore, Dubai',
+        hint: 'Type a location and press comma to add it. Remove a location with -.',
+        values: modalLocations,
+        normalizeFn: normalizeTargetLocation,
+        chipsClass: 'target-locations-chips',
+      });
+      const { input: sectorsInput, getValues: getSectorValues, commitPending: commitSectorPending } = buildChipField({
+        labelText: 'Sectors',
+        description: 'Industries or verticals you want to prioritize.',
+        placeholder: 'e.g., FinTech, Healthcare',
+        hint: 'Type a sector and press comma to add it. Remove a sector with -.',
+        values: modalSectors,
+        normalizeFn: normalizeTargetSector,
+      });
 
       const quickActions = document.createElement('div');
       quickActions.className = 'actions';
@@ -1750,14 +1895,10 @@ function openTargetInputsModal({ focusField } = {}) {
       section.appendChild(quickActions);
 
       const applyInputs = () => {
-        const rawSectors = sectorsInput.value.split(',')
-          .map((value) => normalizeTargetSector(value))
-          .filter(Boolean);
-        setTargetSectors(rawSectors);
-        const rawLocations = locationInput.value.split(',')
-          .map((value) => normalizeTargetLocation(value))
-          .filter(Boolean);
-        setTargetLocations(rawLocations);
+        commitSectorPending();
+        commitLocationPending();
+        setTargetSectors(getSectorValues());
+        setTargetLocations(getLocationValues());
         const next = {
           product: productInput.value.trim(),
           location: [...targetLocations],

@@ -51,9 +51,15 @@
     return toString(value).replace(/<[^>]*>/g, "");
   }
 
+  function normalizeExportPath(path) {
+    if (typeof path !== "string") return path;
+    return path.replace(/\[(\d+)\]/g, ".$1");
+  }
+
   function getPath(obj, path) {
     if (!path || typeof path !== "string") return undefined;
-    const segments = path.split(".").filter(Boolean);
+    const normalizedPath = normalizeExportPath(path);
+    const segments = normalizedPath.split(".").filter(Boolean);
 
     const resolve = (value, idx) => {
       if (idx >= segments.length) return value;
@@ -77,14 +83,32 @@
     return resolve(obj, 0);
   }
 
-  const helpers = Object.freeze({
-    get: getPath,
-    coalesce,
-    join,
-    truncate,
-    stripHtml,
-    toString,
-  });
+  function createHelpers() {
+    let currentIndex = 0;
+    let total = 0;
+    return {
+      get: getPath,
+      coalesce,
+      join,
+      truncate,
+      stripHtml,
+      toString,
+      serial(offset) {
+        const start = Number.isFinite(offset) ? Number(offset) : 0;
+        return currentIndex + 1 + start;
+      },
+      index() {
+        return currentIndex;
+      },
+      total() {
+        return total;
+      },
+      _setIndex(idx, tot) {
+        currentIndex = Number.isFinite(idx) ? idx : 0;
+        total = Number.isFinite(tot) ? tot : 0;
+      },
+    };
+  }
 
   function compileTransform(code) {
     if (!code || typeof code !== "string") {
@@ -105,10 +129,16 @@
     try {
       const transform = compileTransform(payload.code);
       const entries = Array.isArray(payload.entries) ? payload.entries : [];
-      const rows = entries.map((entry) => {
+      const rows = [];
+      const helpers = createHelpers();
+      entries.forEach((entry, idx) => {
+        helpers._setIndex(idx, entries.length);
         const output = transform(entry, helpers);
-        if (output && typeof output === "object") return output;
-        return {};
+        if (output && typeof output === "object") {
+          rows.push(output);
+        } else {
+          rows.push({});
+        }
       });
       safePostMessage({ requestId, ok: true, rows });
     } catch (err) {
